@@ -4,6 +4,20 @@ import { rungKey, roundShares, toProb } from './util.js';
 import { NullRecorder } from './log/recorder.js';
 import * as ev from './log/schema.js';
 
+function provenanceOf(value) {
+  const output = {};
+  for (const key of [
+    'strategyIntent',
+    'actionCandidateId',
+    'signalSnapshotId',
+    'modelVersion',
+    'expectedEdgeAtDecision',
+  ]) {
+    if (value?.[key] != null) output[key] = value[key];
+  }
+  return output;
+}
+
 /**
  * Reconciles the desired rung set against what is actually resting on the
  * exchange: cancel what is no longer wanted, place what is missing, top up
@@ -77,6 +91,11 @@ export class OrderManager {
 
   setAheadLeg(leg) {
     this.aheadLeg = leg === 'UP' || leg === 'DOWN' ? leg : null;
+  }
+
+  provenanceFor(orderId) {
+    if (orderId == null) return Object.freeze({});
+    return Object.freeze(provenanceOf(this.orderLedger.get(String(orderId))));
   }
 
   /**
@@ -259,6 +278,7 @@ export class OrderManager {
         feeUsd: 0,
         placedAtMs: Date.now(),
         updatedAtMs: Date.now(),
+        ...provenanceOf(rung),
       });
       this.ledgerVersion += 1;
       this.recorder.record(
@@ -281,6 +301,7 @@ export class OrderManager {
         offsetTicks: rung.offsetTicks,
         protection: !!rung.protection,
         postOnly: !rung.protection,
+        ...provenanceOf(rung),
       });
       const key = rungKey(rung.leg, rung.mils);
       const existing = this.live.get(key);
@@ -296,6 +317,7 @@ export class OrderManager {
           restingShares: rung.shares,
           orderId: res.orderId,
           placedAtMs: Date.now(),
+          ...provenanceOf(rung),
         });
         this.stats.placed += 1;
       }
@@ -317,6 +339,7 @@ export class OrderManager {
         feeUsd: 0,
         placedAtMs: Date.now(),
         updatedAtMs: Date.now(),
+        ...provenanceOf(rung),
       });
       this.ledgerVersion += 1;
       this.recorder.record(
@@ -328,6 +351,7 @@ export class OrderManager {
           orderId: res.orderId,
           replenish: rung.replenish,
           protection: !!rung.protection,
+          ...provenanceOf(rung),
         })
       );
     } catch (err) {
@@ -350,6 +374,7 @@ export class OrderManager {
         feeUsd: 0,
         placedAtMs: Date.now(),
         updatedAtMs: Date.now(),
+        ...provenanceOf(rung),
       });
       this.ledgerVersion += 1;
       this.recorder.record(

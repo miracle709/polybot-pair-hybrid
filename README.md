@@ -6,7 +6,7 @@ Node.js implementation of the strategy reconstructed from Polymarket wallet
 Derived from 1,473 rounds / 124.2h of fills (40,718 buys, **0 sells**),
 161,808 one-second L2 book snapshots and 641 scored rounds.
 
-## Active strategy: V2 finite pair cycles
+## Active strategy: V2 finite pair cycles; V3 shadow available
 
 The repository preserves the V1 feeds, adapters, resolver, supervisor,
 settlement, logging, replay, and UI, but the active quote decision is V2.
@@ -24,6 +24,14 @@ settlement, logging, replay, and UI, but the active quote decision is V2.
 V2 does not claim profitability. Its immediate goal is to make deliberate
 structurally uneconomic pair completion impossible under the configured hard
 constraints and to collect LIVE markouts for later edge calibration.
+
+The repository also contains a V3 unified portfolio/action engine through the
+shadow-ready milestone. `V3_ENABLED=0` is the default. With
+`V3_ENABLED=1` and `V3_SHADOW_ONLY=1`, it builds causal signals, emits a
+probability and empirical-interval interface, evaluates pair, directional,
+risk, cancellation, and no-action candidates against exact UP/DOWN settlement
+PnL, and logs the hypothetical selection beside the unchanged V2 action. It
+does not route V3 orders to the exchange. See [V3.md](V3.md).
 
 ## V1 reconstruction background (superseded control logic)
 
@@ -48,6 +56,11 @@ src/
   book.js                LegBook / MarketBook — touch, depth, complement mirroring
   inventory.js           aggregate plus immutable FIFO lot/pair accounting
   pairEconomics.js       pure complement-cap and fee-buffer calculations
+  portfolioMath.js       exact authoritative UP/DOWN settlement mathematics
+  signals/               causal buffers, gaps, momentum, volatility, ex-own book
+  models/                structural and offline-artifact probability interfaces
+  actions/               immutable candidates and FIFO pair-interaction preview
+  hybridController.js    pure robust-EV candidate generation and selection
   quoter.js              THE DECISION SURFACE — pure function, no I/O
   orderManager.js        diff desired vs live rungs; cancel, place, replenish
   roundRunner.js         per-round state machine WARMUP → QUOTING → SETTLING

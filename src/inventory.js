@@ -63,6 +63,25 @@ export class RoundInventory {
       feeUsd,
       ts: Number(ts),
       orderId: details?.orderId ?? null,
+      // Provenance only. These fields never influence physical FIFO matching.
+      ...(details?.intent != null || details?.strategyIntent != null
+        ? {
+            intent: details.intent ?? details.strategyIntent,
+            strategyIntent: details.strategyIntent ?? details.intent,
+          }
+        : {}),
+      ...(details?.actionCandidateId != null
+        ? { actionCandidateId: details.actionCandidateId }
+        : {}),
+      ...(details?.signalSnapshotId != null
+        ? { signalSnapshotId: details.signalSnapshotId }
+        : {}),
+      ...(details?.modelVersion != null
+        ? { modelVersion: details.modelVersion }
+        : {}),
+      ...(details?.expectedEdgeAtDecision != null
+        ? { expectedEdgeAtDecision: details.expectedEdgeAtDecision }
+        : {}),
     });
     l.shares = roundAccounting(l.shares + shares);
     l.costUsd = roundAccounting(l.costUsd + notionalUsd(shares, priceMils));
@@ -90,6 +109,12 @@ export class RoundInventory {
           id: lot.id,
           feeUsd: lot.feeUsd,
           orderId: lot.orderId,
+          intent: lot.intent ?? lot.strategyIntent,
+          strategyIntent: lot.strategyIntent ?? lot.intent,
+          actionCandidateId: lot.actionCandidateId,
+          signalSnapshotId: lot.signalSnapshotId,
+          modelVersion: lot.modelVersion,
+          expectedEdgeAtDecision: lot.expectedEdgeAtDecision,
         }
       );
     }
@@ -142,6 +167,18 @@ export class RoundInventory {
           pairMils,
           grossEdgeMils: 1000 - pairMils,
           completedAt: newLot.ts,
+          ...(upLot.strategyIntent != null
+            ? { upStrategyIntent: upLot.strategyIntent }
+            : {}),
+          ...(downLot.strategyIntent != null
+            ? { downStrategyIntent: downLot.strategyIntent }
+            : {}),
+          ...(upLot.actionCandidateId != null
+            ? { upActionCandidateId: upLot.actionCandidateId }
+            : {}),
+          ...(downLot.actionCandidateId != null
+            ? { downActionCandidateId: downLot.actionCandidateId }
+            : {}),
         })
       );
       remaining = roundAccounting(remaining - matched);

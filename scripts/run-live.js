@@ -19,6 +19,9 @@ import {
   ChainlinkPriceToBeatProvider,
   GammaPriceToBeatProvider,
 } from '../src/live/priceToBeat.js';
+import { HttpBtcReferenceFeed } from '../src/signals/btcReferenceFeed.js';
+import { StructuralProbabilityModel } from '../src/models/structuralModel.js';
+import { MarketResidualLogisticModel } from '../src/models/marketResidualLogisticModel.js';
 
 loadEnv();
 
@@ -90,6 +93,44 @@ if (process.env.PTB_FILE) {
   ptbProvider = new ChainlinkPriceToBeatProvider({ provider: polygonProvider });
 }
 
+const httpSignalFeed = (prefix, fallbackSource) => {
+  const url = process.env[`${prefix}_URL`];
+  if (!url) return null;
+  return new HttpBtcReferenceFeed({
+    url,
+    source: process.env[`${prefix}_SOURCE`] || fallbackSource,
+    explicitQuality: process.env[`${prefix}_SOURCE_QUALITY`] || null,
+    priceField: process.env[`${prefix}_PRICE_FIELD`] || 'price',
+    publisherTimeField: process.env[`${prefix}_TIME_FIELD`] || 'timestamp',
+    pollMs: numberEnv(`${prefix}_POLL_MS`, 250),
+    timeoutMs: numberEnv(`${prefix}_TIMEOUT_MS`, 1000),
+  });
+};
+
+const btcReferenceFeed = httpSignalFeed(
+  'BTC_REFERENCE',
+  'configured_btc_http_untrusted'
+);
+const settlementReferenceFeed = httpSignalFeed(
+  'SETTLEMENT_REFERENCE',
+  'configured_reference_http_untrusted'
+);
+
+let probabilityModel = new StructuralProbabilityModel();
+if (params.V3_ENABLED && process.env.V3_MODEL_ARTIFACT_PATH) {
+  try {
+    const fs = await import('node:fs/promises');
+    const artifact = JSON.parse(
+      await fs.readFile(process.env.V3_MODEL_ARTIFACT_PATH, 'utf8')
+    );
+    probabilityModel = new MarketResidualLogisticModel({ artifact });
+  } catch (error) {
+    // Safe fallback remains uncalibrated and therefore cannot authorize
+    // directional capital. Pair execution continues through V2.
+    console.warn(`V3 model artifact unavailable; structural shadow only: ${error.message}`);
+  }
+}
+
 const sup = new Supervisor({
   adapter,
   apiCreds: live
@@ -103,6 +144,9 @@ const sup = new Supervisor({
   params,
   guards,
   priceToBeatProvider: ptbProvider,
+  btcReferenceFeed,
+  settlementReferenceFeed,
+  probabilityModel,
   resolutionWatcher: new ResolutionWatcher({ ethersProvider: polygonProvider }),
   limits: {
     maxDailyLossUsd: numberEnv('MAX_DAILY_LOSS', 500),

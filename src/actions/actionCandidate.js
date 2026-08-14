@@ -14,12 +14,33 @@ export const ActionType = Object.freeze({
 
 const ACTION_TYPES = new Set(Object.values(ActionType));
 
+function freezeValue(value) {
+  if (Array.isArray(value)) return Object.freeze(value.map(freezeValue));
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    const copy = {};
+    for (const [key, item] of Object.entries(value)) copy[key] = freezeValue(item);
+    return Object.freeze(copy);
+  }
+  return value;
+}
+
+function candidateId(input) {
+  return input.actionCandidateId ?? [
+    input.type,
+    input.signalSnapshotId ?? 'no-signal',
+    input.leg ?? 'BOTH',
+    Number(input.shares ?? 0),
+    input.limitMils ?? input.expectedFillPriceMils ?? 'na',
+    input.executionType ?? 'na',
+  ].join(':');
+}
+
 export function createActionCandidate(input) {
   if (!ACTION_TYPES.has(input?.type)) {
     throw new RangeError(`unknown action type ${input?.type}`);
   }
   if (input.type !== ActionType.NO_ACTION) requireStrategyIntent(input.intent);
-  return Object.freeze({
+  const base = {
     type: input.type,
     intent: input.intent ?? null,
     leg: input.leg ?? null,
@@ -34,7 +55,7 @@ export function createActionCandidate(input) {
     robustExpectedPnlDelta: Number(input.robustExpectedPnlDelta ?? 0),
     capitalRequired: Number(input.capitalRequired ?? 0),
     riskDelta: Number(input.riskDelta ?? 0),
-    pairInteraction: input.pairInteraction ?? null,
+    pairInteraction: freezeValue(input.pairInteraction ?? null),
     signalSnapshotId: input.signalSnapshotId ?? null,
     predictedProbability: input.predictedProbability ?? null,
     probabilityLower: input.probabilityLower ?? null,
@@ -42,6 +63,20 @@ export function createActionCandidate(input) {
     executionType: input.executionType ?? null,
     reasons: Object.freeze([...(input.reasons ?? [])]),
     eligible: Boolean(input.eligible),
+  };
+  // Preserve the compact legacy NO_ACTION record while requiring complete
+  // provenance and economics on every actionable candidate.
+  if (input.type === ActionType.NO_ACTION) return Object.freeze(base);
+  return Object.freeze({
+    actionCandidateId: candidateId(input),
+    ...base,
+    pUp: input.predictedProbability ?? null,
+    expectedExecutionReserveUsd: Number(input.expectedExecutionReserveUsd ?? 0),
+    modelVersion: input.modelVersion ?? null,
+    expectedEdgeAtDecision: input.expectedEdgeAtDecision ?? null,
+    orders: freezeValue(input.orders ?? null),
+    roundRegime: input.roundRegime ?? null,
+    executionAuthorized: Boolean(input.executionAuthorized),
   });
 }
 
@@ -54,4 +89,3 @@ export function noActionCandidate(reasons = []) {
     eligible: true,
   });
 }
-

@@ -229,3 +229,17 @@ test('buildStrategyConfig rejects invalid PAPER_TRADE_FRACTION', () => {
   );
   resetEnv();
 });
+
+test('V3 defaults preserve V2 and active execution fails closed at this milestone', () => {
+  resetEnv({ V3_ENABLED: '0', V3_SHADOW_ONLY: '1' });
+  const { params } = buildStrategyConfig({ feeMode: 'paper' });
+  assert.equal(params.V3_ENABLED, false);
+  assert.equal(params.V3_SHADOW_ONLY, true);
+  assert.equal(params.DIRECTIONAL_ENABLED, false);
+  resetEnv({ V3_ENABLED: '1', V3_SHADOW_ONLY: '0' });
+  assert.throws(
+    () => buildStrategyConfig({ feeMode: 'paper' }),
+    /shadow-ready milestone/
+  );
+  resetEnv();
+});

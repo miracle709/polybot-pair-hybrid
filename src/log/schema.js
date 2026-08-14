@@ -29,6 +29,13 @@ export const EventType = {
   HALT: 'HALT',
   HEALTH: 'HEALTH',
   MARKOUT: 'MAKER_MARKOUT',
+  SIGNAL_SNAPSHOT: 'signal_snapshot',
+  PROBABILITY_PREDICTION: 'probability_prediction',
+  ACTION_CANDIDATES: 'action_candidates',
+  ACTION_SELECTED: 'action_selected',
+  ACTION_REJECTED: 'action_rejected',
+  V3_SHADOW_DECISION: 'v3_shadow_decision',
+  PAIR_COMPLETION_OBSERVATION: 'pair_completion_observation',
 };
 
 /** Order lifecycle states, as written to `st`. */
@@ -76,7 +83,16 @@ export const roundOpen = (rid, windowStart, tokenIds) => ({
  * mix chainlink_open with a Binance print, they differ by ~$60 and the
  * whole round hinges on the difference.
  */
-export const priceToBeat = (rid, { ptb, src, poly, binance, sec }) => ({
+export const priceToBeat = (rid, {
+  ptb,
+  src,
+  poly,
+  binance,
+  sec,
+  sourceQuality,
+  publisherTimeMs,
+  arrivalTimeMs,
+}) => ({
   t: Date.now(),
   ts: Date.now() / 1000,
   type: EventType.PRICE_TO_BEAT,
@@ -86,6 +102,9 @@ export const priceToBeat = (rid, { ptb, src, poly, binance, sec }) => ({
   price_to_beat: ptb,
   ptb_src: src ?? null,
   source: src ?? null,
+  source_quality: sourceQuality ?? null,
+  publisher_time_ms: publisherTimeMs ?? null,
+  arrival_time_ms: arrivalTimeMs ?? null,
   poly_btc: poly ?? null,
   bnc_btc: binance ?? null,
   sec: sec ?? null,
@@ -117,7 +136,19 @@ export const quoteIntent = (rid, sec, rungs, suppressed, mkt, decision = null) =
   pause_new_cycles: decision?.pauseNewCycles ?? false,
 });
 
-export const orderPlaced = (rid, sec, { leg, mils, shares, offsetTicks, orderId, replenish }) => ({
+export const orderPlaced = (rid, sec, {
+  leg,
+  mils,
+  shares,
+  offsetTicks,
+  orderId,
+  replenish,
+  strategyIntent,
+  actionCandidateId,
+  signalSnapshotId,
+  modelVersion,
+  expectedEdgeAtDecision,
+}) => ({
   t: Date.now(),
   type: EventType.ORDER_PLACED,
   rid,
@@ -129,6 +160,13 @@ export const orderPlaced = (rid, sec, { leg, mils, shares, offsetTicks, orderId,
   sh: shares,
   off: offsetTicks,
   rep: replenish || undefined,
+  ...(strategyIntent != null ? { strategy_intent: strategyIntent } : {}),
+  ...(actionCandidateId != null ? { action_candidate_id: actionCandidateId } : {}),
+  ...(signalSnapshotId != null ? { signal_snapshot_id: signalSnapshotId } : {}),
+  ...(modelVersion != null ? { model_version: modelVersion } : {}),
+  ...(expectedEdgeAtDecision != null
+    ? { expected_edge_at_decision: expectedEdgeAtDecision }
+    : {}),
 });
 
 export const orderCancelled = (rid, sec, { leg, mils, orderIds, restingShares, ageMs }) => ({
@@ -180,6 +218,11 @@ export const fill = (
     status,
     transactionHash,
     raw,
+    strategyIntent,
+    actionCandidateId,
+    signalSnapshotId,
+    modelVersion,
+    expectedEdgeAtDecision,
   },
   book,
   inv
@@ -208,6 +251,11 @@ export const fill = (
   role: role ?? null,
   fee: fee ?? 0,
   raw: raw ?? null,
+  strategy_intent: strategyIntent ?? null,
+  action_candidate_id: actionCandidateId ?? null,
+  signal_snapshot_id: signalSnapshotId ?? null,
+  model_version: modelVersion ?? null,
+  expected_edge_at_decision: expectedEdgeAtDecision ?? null,
   up_bid: book?.up_bid ?? null,
   up_ask: book?.up_ask ?? null,
   dn_bid: book?.dn_bid ?? null,
@@ -264,6 +312,93 @@ export const makerMarkout = ({
   seconds_into_round: roundSecond,
   inventory_state: inventoryState,
   pair_cycle_state: pairCycleState,
+});
+
+export const signalSnapshot = (rid, snapshot) => ({
+  t: Date.now(),
+  type: EventType.SIGNAL_SNAPSHOT,
+  rid,
+  round_slug: rid,
+  decision_time_ms: snapshot.decisionTimeMs,
+  snapshot_id: snapshot.snapshotId,
+  valid: snapshot.valid,
+  invalid_reasons: snapshot.invalidReasons,
+  snapshot,
+});
+
+export const probabilityPrediction = (rid, snapshotId, prediction) => ({
+  t: Date.now(),
+  type: EventType.PROBABILITY_PREDICTION,
+  rid,
+  round_slug: rid,
+  snapshot_id: snapshotId,
+  model_version: prediction.modelVersion,
+  p_up: prediction.pUp,
+  lower: prediction.lower,
+  upper: prediction.upper,
+  calibrated: prediction.calibrated,
+  valid: prediction.valid,
+  reasons: prediction.reasons,
+});
+
+export const actionCandidates = (rid, snapshotId, candidates) => ({
+  t: Date.now(),
+  type: EventType.ACTION_CANDIDATES,
+  rid,
+  round_slug: rid,
+  snapshot_id: snapshotId,
+  count: candidates.length,
+  candidates,
+});
+
+export const actionSelected = (rid, snapshotId, candidate) => ({
+  t: Date.now(),
+  type: EventType.ACTION_SELECTED,
+  rid,
+  round_slug: rid,
+  snapshot_id: snapshotId,
+  action_candidate_id: candidate.actionCandidateId ?? null,
+  candidate,
+});
+
+export const actionRejected = (rid, snapshotId, rejected) => ({
+  t: Date.now(),
+  type: EventType.ACTION_REJECTED,
+  rid,
+  round_slug: rid,
+  snapshot_id: snapshotId,
+  count: rejected.length,
+  rejected,
+});
+
+export const v3ShadowDecision = ({
+  rid,
+  snapshotId,
+  prediction,
+  selected,
+  portfolio,
+  actualV2Action,
+  makerSkew = null,
+}) => ({
+  t: Date.now(),
+  type: EventType.V3_SHADOW_DECISION,
+  rid,
+  round_slug: rid,
+  snapshot_id: snapshotId,
+  model_version: prediction?.modelVersion ?? null,
+  v3_action: selected,
+  actual_v2_action: actualV2Action,
+  portfolio,
+  maker_skew: makerSkew,
+  execution_blocked: true,
+});
+
+export const pairCompletionObservation = (rid, observation) => ({
+  t: Date.now(),
+  type: EventType.PAIR_COMPLETION_OBSERVATION,
+  rid,
+  round_slug: rid,
+  observation,
 });
 
 export const bookSnapshot = (rid, sec, mkt, books = null) => {

@@ -20,6 +20,7 @@ export class Engine {
     guards = GUARDS,
     recorder = null,
     onInvariantBreach = null,
+    probabilityModel = null,
   }) {
     this.exchange = exchange;
     this.recorder = recorder;
@@ -29,6 +30,7 @@ export class Engine {
     this.params = params;
     this.guards = guards;
     this.onInvariantBreach = onInvariantBreach;
+    this.probabilityModel = probabilityModel;
     /** @type {RoundRunner|null} */
     this.current = null;
     this.history = [];
@@ -126,6 +128,15 @@ export class Engine {
     return runner;
   }
 
+  /** Directional data feeds are optional; outages never affect V2 routing. */
+  onBtcReference(observation) {
+    return this.current?.observeBtcReference(observation) ?? null;
+  }
+
+  onSettlementReference(observation) {
+    return this.current?.observeSettlementReference(observation) ?? null;
+  }
+
   /** Call when a round resolves. */
   async onResolution(roundSlug, winner) {
     if (
@@ -169,6 +180,7 @@ export class Engine {
         logger: this.logger,
         recorder: this.recorder ?? undefined,
         onInvariantBreach: this.onInvariantBreach,
+        probabilityModel: this.probabilityModel,
       });
       if (this.current && this.current.state !== 'DONE') {
         await this.current.orders.cancelAll();

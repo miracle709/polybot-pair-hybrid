@@ -12,13 +12,17 @@
     "src/",
     "scripts/",
     "README.md",
-    "ARCHITECTURE.md"
+    "ARCHITECTURE.md",
+    "STRATEGY.md",
+    "V3.md",
+    "research/"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "bench": "node scripts/bench-recorder.js",
     "replay": "node scripts/run-replay.js",
     "analyse": "node scripts/analyse-log.js",
+    "research:v3": "node scripts/v3-research.js",
     "paper": "node scripts/run-live.js",
     "live": "node scripts/run-live.js --live"
   },

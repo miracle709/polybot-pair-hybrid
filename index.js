@@ -14,6 +14,8 @@ export { PARAMS, GUARDS, MARKET } from './src/config.js';
 export { LegBook, MarketBook } from './src/book.js';
 export { RoundInventory } from './src/inventory.js';
 export { toMils, toProb, tickSizeMils, stepTicks, complementMils } from './src/util.js';
+export * from './src/portfolioMath.js';
+export { ExecutionType, executionFeeUsd, cryptoTakerFeeUsd } from './src/fees.js';
 
 // --- strategy ---------------------------------------------------------------
 export {
@@ -24,6 +26,40 @@ export {
 export { OrderManager } from './src/orderManager.js';
 export { RoundRunner, RoundState } from './src/roundRunner.js';
 export { Engine } from './src/engine.js';
+export { HybridController } from './src/hybridController.js';
+export { signalInformedMakerSkew } from './src/makerSkew.js';
+export {
+  ActionType,
+  createActionCandidate,
+  noActionCandidate,
+} from './src/actions/actionCandidate.js';
+export { analyzePairInteraction } from './src/actions/pairInteraction.js';
+export { StrategyIntent } from './src/strategyIntent.js';
+
+// --- V3 causal signals and probability models ------------------------------
+export { FeatureEngine } from './src/signals/featureEngine.js';
+export { TimeSeriesBuffer } from './src/signals/timeSeriesBuffer.js';
+export { createSignalSnapshot } from './src/signals/signalSnapshot.js';
+export { SourceQuality, sourceQuality } from './src/signals/sourceQuality.js';
+export {
+  BtcReferenceFeed,
+  HttpBtcReferenceFeed,
+  StaticBtcReferenceFeed,
+} from './src/signals/btcReferenceFeed.js';
+export { ProbabilityModel } from './src/models/probabilityModel.js';
+export { StructuralProbabilityModel } from './src/models/structuralModel.js';
+export { MarketResidualLogisticModel } from './src/models/marketResidualLogisticModel.js';
+export {
+  ExecutionReserveModel,
+  StaticExecutionReserveModel,
+  EmpiricalExecutionReserveModel,
+} from './src/models/executionReserveModel.js';
+export {
+  PairCompletionModel,
+  UnvalidatedPairCompletionModel,
+  EmpiricalPairCompletionModel,
+} from './src/models/pairCompletionModel.js';
+export { PairCompletionTracker } from './src/pairCompletionTracker.js';
 
 // --- exchange adapters ------------------------------------------------------
 export { ExchangeAdapter } from './src/exchange/interface.js';

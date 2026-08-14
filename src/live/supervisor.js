@@ -41,6 +41,9 @@ export class Supervisor extends EventEmitter {
     limits = {},
     log = {},
     priceToBeatProvider = null,
+    btcReferenceFeed = null,
+    settlementReferenceFeed = null,
+    probabilityModel = null,
     resolutionWatcher = null,
     usePrivateFeed = false,
     exitOnHalt = null,
@@ -67,6 +70,8 @@ export class Supervisor extends EventEmitter {
     this.params = params;
     this.guards = guards;
     this.ptbProvider = priceToBeatProvider;
+    this.btcReferenceFeed = btcReferenceFeed;
+    this.settlementReferenceFeed = settlementReferenceFeed;
     // Without this nothing ever calls onResolution(), so rounds never settle
     // and PnL is never realised.
     this.resolutionWatcher = resolutionWatcher ?? new ResolutionWatcher({ logger });
@@ -90,6 +95,7 @@ export class Supervisor extends EventEmitter {
       params,
       guards,
       recorder: this.recorder,
+      probabilityModel,
       onInvariantBreach: (info) => {
         const reason =
           info?.reason ??
@@ -192,6 +198,15 @@ export class Supervisor extends EventEmitter {
     this.marketFeed.on('stale', () => this.halt('market feed stale'));
     this.marketFeed.on('resync', () => this.#flattenQuotes('book resync'));
 
+    // Directional feeds are deliberately isolated from market-feed health.
+    // Missing/stale observations invalidate V3 snapshots but never halt V2.
+    this.btcReferenceFeed?.on('price', (observation) =>
+      this.engine.onBtcReference(observation)
+    );
+    this.settlementReferenceFeed?.on('price', (observation) =>
+      this.engine.onSettlementReference(observation)
+    );
+
     if (this.usePrivateFeed) {
       this.userFeed.on('connected', () => {
         if (!this.userFeedHealthy) this.logger.info?.('user feed connected');
@@ -226,6 +241,8 @@ export class Supervisor extends EventEmitter {
     }
 
     await this.#rollTo(Engine.currentWindowStart());
+    this.btcReferenceFeed?.start?.();
+    this.settlementReferenceFeed?.start?.();
     this.rollTimer = setInterval(() => this.#maybeRoll(), 1000);
     this.rollTimer.unref?.();
 
@@ -1341,6 +1358,23 @@ export class Supervisor extends EventEmitter {
       userFeedHealthy: this.userFeedHealthy,
       staleBooksDropped: this.staleBooks ?? 0,
       market: this.marketFeed.health(),
+      engineMode: this.engine.current?.v3Status?.().engineMode ?? 'V2',
+      v3: this.engine.current?.v3Status?.() ?? {
+        engineMode: 'V2',
+        enabled: false,
+        shadowOnly: true,
+      },
+      signalFeeds: {
+        btc: this.btcReferenceFeed?.health?.() ?? {
+          healthy: false,
+          reason: 'not_configured',
+        },
+        settlementReference:
+          this.settlementReferenceFeed?.health?.() ?? {
+            healthy: false,
+            reason: 'not_configured',
+          },
+      },
       dailyPnlUsd,
       dailyPnlUsdExact,
       totalPnlUsd: settledPnlUsd,
@@ -1474,6 +1508,8 @@ export class Supervisor extends EventEmitter {
     if (this.healthTimer) clearInterval(this.healthTimer);
     this.marketFeed.close();
     this.userFeed.close();
+    this.btcReferenceFeed?.stop?.();
+    this.settlementReferenceFeed?.stop?.();
     this.resolutionWatcher?.stop();
     try {
       await this.adapter.cancelEverything();

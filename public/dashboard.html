@@ -120,6 +120,7 @@
       const prices=d.prices||{}, upPx=prices.up||{}, dnPx=prices.down||{};
       const current=d.currentRoundPnl||{}, paper=d.paperSummary||{}, mon=d.monitor||{}, rec=d.recorder||{};
       const timing=d.roundTiming||{};
+      const v3=d.v3||{}, signal=v3.signal||{}, prediction=v3.probability||{}, selected=v3.selectedAction||{};
       const activationPending=
         d.roundActivationPending===true||timing.activationPending===true;
       const age=mon.snapshotAt?Date.now()-mon.snapshotAt:null;
@@ -128,6 +129,7 @@
 
       patchHtml(el('badges'),[
         badge(mode.toUpperCase(),mode==='live'?'warn':'paper'),
+        badge(d.engineMode||'V2',v3.enabled?'warn':'paper'),
         badge(d.halted?`HALTED · ${d.haltReason||'unknown'}`:'RUNNING',d.halted?'bad':'ok'),
         d.autoBalanced?badge(`AUTO BALANCED · ${usd(d.lockedPnlUsd)}`,'ok'):'',
         d.paused&&!d.autoBalanced?badge(`ROUND PAUSED · ${d.pauseReason||'risk limit'}`,'warn'):'',
@@ -167,6 +169,7 @@
           ${metric('If UP wins',usd(current.ifUpWins?.pnlUsd),pnlClass(current.ifUpWins?.pnlUsd))}
           ${metric('If DOWN wins',usd(current.ifDownWins?.pnlUsd),pnlClass(current.ifDownWins?.pnlUsd))}
           ${metric('Worst-case PnL',usd(current.worstCasePnlUsd),pnlClass(current.worstCasePnlUsd))}
+          ${v3.enabled?metric('V3 robust EV',usd(selected.robustExpectedPnlDelta),pnlClass(selected.robustExpectedPnlDelta)):''}
           ${metric('Lifetime settled PnL',usd(d.settledPnlUsd??d.totalPnlUsd),pnlClass(d.settledPnlUsd??d.totalPnlUsd))}
           ${metric('Session settled PnL',usd(d.sessionSettledPnlUsd),pnlClass(d.sessionSettledPnlUsd))}
           ${mode==='paper'?metric('Paper bankroll',usd(d.paperBankrollUsd),pnlClass((d.paperBankrollUsd??0)-(d.paperInitialDepositUsd??0))):''}
@@ -209,6 +212,27 @@
           ${row('Time remaining',remainingWhole==null?'\u2014':clock(remainingWhole))}
           ${row('Market close',!activationPending&&finite(timing.endEpoch)?new Date(Number(timing.endEpoch)*1000).toLocaleTimeString():'\u2014')}
           ${row('Target strategy','V2 finite pair-cycle · marginal economics')}
+        </section>
+        <section class="card full"><h2>V3 unified portfolio engine</h2>
+          ${row('Engine mode / execution',`${d.engineMode||'V2'} / ${v3.execution||'V2_ONLY'}`)}
+          ${row('Signal health',v3.enabled?(signal.valid?'VALID':`INVALID: ${(signal.invalidReasons||[]).join(', ')||'warming up'}`):'V3 disabled')}
+          ${row('Source ages: book / BTC / reference',v3.enabled?`${num(signal.bookAgeMs,0)} / ${num(signal.btcAgeMs,0)} / ${num(signal.settlementPriceAgeMs,0)} ms`:'—')}
+          ${row('Price to beat source',v3.enabled?`${signal.priceToBeatSource||'—'} (${signal.priceToBeatSourceQuality||'UNTRUSTED'})`:'—')}
+          ${row('Settlement reference source',v3.enabled?`${signal.settlementReferenceSource||'—'} (${signal.settlementReferenceSourceQuality||'UNTRUSTED'})`:'—')}
+          ${row('Raw / log / TWAP gap',v3.enabled?`${num(signal.rawGapBps,2)} / ${num(signal.logGapBps,2)} / ${num(signal.twap30GapBps,2)} bps`:'—')}
+          ${row('BTC returns 1 / 3 / 5 / 10s',v3.enabled?`${num(signal.btcReturn1sBps,2)} / ${num(signal.btcReturn3sBps,2)} / ${num(signal.btcReturn5sBps,2)} / ${num(signal.btcReturn10sBps,2)} bps`:'—')}
+          ${row('CLOB returns 1 / 3 / 5 / 10s',v3.enabled?`${num(signal.clobReturn1sBps,2)} / ${num(signal.clobReturn3sBps,2)} / ${num(signal.clobReturn5sBps,2)} / ${num(signal.clobReturn10sBps,2)} bps`:'—')}
+          ${row('Volatility / remaining estimate',v3.enabled?`${num(signal.realizedVolatility,7)} / ${num(signal.remainingVolatilityEstimate,2)} bps`:'—')}
+          ${row('Own quote contamination',v3.enabled?(signal.ownQuoteContaminated?'BLOCKED':'excluded safely'):'—')}
+          ${row('Model',prediction.modelVersion||'—')}
+          ${row('pUp / lower / upper',v3.enabled?`${num(prediction.pUp,4)} / ${num(prediction.lower,4)} / ${num(prediction.upper,4)}`:'—')}
+          ${row('Calibrated',prediction.calibrated?'yes':'no — directional capital disabled')}
+          ${row('Candidates / selected',v3.enabled?`${v3.candidateCount??0} / ${selected.type||'NO_ACTION'}`:'—')}
+          ${row('Intent / execution type',v3.enabled?`${selected.intent||'—'} / ${selected.executionType||'—'}`:'—')}
+          ${row('Expected / robust EV',v3.enabled?`${usd(selected.expectedPnlDelta)} / ${usd(selected.robustExpectedPnlDelta)}`:'—',pnlClass(selected.robustExpectedPnlDelta))}
+          ${row('Risk after: UP / DOWN / worst',v3.enabled?`${usd(selected.pnlIfUpAfter)} / ${usd(selected.pnlIfDownAfter)} / ${usd(selected.worstCasePnlAfter)}`:'—')}
+          ${row('Actual executed strategy',v3.actualV2Action?.type||'V2_QUOTE_RECONCILE')}
+          ${row('Shadow guarantee',v3.enabled?'V3 cannot send orders in this milestone':'not applicable')}
         </section>
         <section class="card full"><h2>All orders · current round</h2>${ordersTable(d.orders||[])}</section>
         <section class="card full"><h2>Round history · latest 50 settled rounds</h2>${roundsTable(d.rounds||[])}</section>

@@ -15,6 +15,11 @@ import {
 } from './util.js';
 import { NullRecorder } from './log/recorder.js';
 import * as ev from './log/schema.js';
+import { FeatureEngine } from './signals/featureEngine.js';
+import { StructuralProbabilityModel } from './models/structuralModel.js';
+import { HybridController } from './hybridController.js';
+import { PairCompletionTracker } from './pairCompletionTracker.js';
+import { signalInformedMakerSkew } from './makerSkew.js';
 
 export const RoundState = {
   WARMUP: 'WARMUP',     // before ENTRY_GATE_SECONDS, idle by design
@@ -79,6 +84,38 @@ export class RoundRunner {
     this.lastIntentSig = null;
     this.lastIntentAtMs = 0;
     this.lastBookLogMs = 0;
+    this.v3Enabled = Boolean(this.params.V3_ENABLED);
+    this.lastV3DecisionAtMs = 0;
+    this.lastSignalSnapshot = null;
+    this.lastProbabilityPrediction = null;
+    this.lastHybridDecision = null;
+    this.lastActualV2Action = null;
+    this.lastMakerSkew = null;
+    if (this.v3Enabled) {
+      this.featureEngine = new FeatureEngine({
+        roundSlug: this.roundSlug,
+        windowStartEpoch: this.windowStartEpoch,
+        roundSeconds: this.params.ROUND_SECONDS,
+        bookMaxAgeMs: this.params.SIGNAL_BOOK_MAX_AGE_MS,
+        btcMaxAgeMs: this.params.SIGNAL_BTC_MAX_AGE_MS,
+        referenceMaxAgeMs: this.params.SIGNAL_REFERENCE_MAX_AGE_MS,
+        volatilityWindowMs: this.params.SIGNAL_VOLATILITY_WINDOW_MS,
+        twapWindowMs: this.params.SIGNAL_TWAP_WINDOW_MS,
+      });
+      this.probabilityModel =
+        opts.probabilityModel ?? new StructuralProbabilityModel();
+      this.hybridController = new HybridController({
+        params: this.params,
+        guards: this.guards,
+      });
+      this.pairCompletionTracker = new PairCompletionTracker({
+        roundSlug: this.roundSlug,
+        onObservation: (observation) =>
+          this.recorder.record(
+            ev.pairCompletionObservation(this.roundSlug, observation)
+          ),
+      });
+    }
     this.recorder.record(ev.roundOpen(this.roundSlug, this.windowStartEpoch, this.tokenIds));
   }
 
@@ -194,8 +231,32 @@ export class RoundRunner {
    * it (the CLOB does not publish it on the market channel).
    */
   setPriceToBeat(info) {
-    this.priceToBeat = info;
-    this.recorder.record(ev.priceToBeat(this.roundSlug, { ...info, sec: this.sec }));
+    const captureTimeMs = Number.isFinite(Number(info?.arrivalTimeMs))
+      ? Number(info.arrivalTimeMs)
+      : Date.now();
+    this.priceToBeat = Object.freeze({
+      ...info,
+      captureTimeMs,
+      publisherTimeMs:
+        info?.publisherTimeMs ??
+        (Number.isFinite(Number(info?.updatedAt))
+          ? Number(info.updatedAt) * 1000
+          : captureTimeMs),
+      arrivalTimeMs: info?.arrivalTimeMs ?? captureTimeMs,
+    });
+    this.recorder.record(
+      ev.priceToBeat(this.roundSlug, { ...this.priceToBeat, sec: this.sec })
+    );
+  }
+
+  observeBtcReference(observation) {
+    if (!this.v3Enabled) return null;
+    return this.featureEngine.observeBtc(observation);
+  }
+
+  observeSettlementReference(observation) {
+    if (!this.v3Enabled) return null;
+    return this.featureEngine.observeSettlementReference(observation);
   }
 
   /**
@@ -237,6 +298,7 @@ export class RoundRunner {
     const t = secondsIntoRound(nowEpochSeconds, this.windowStartEpoch);
     this.sec = t;
     this.lastBooks = books;
+    this.pairCompletionTracker?.observeBook({ books, roundSecond: t });
 
     if (t >= this.params.QUOTE_STOP_SECONDS) {
       if (this.state !== RoundState.SETTLING && this.state !== RoundState.DONE) {
@@ -252,6 +314,7 @@ export class RoundRunner {
 
     if (t < this.params.PAIR_DISCOVERY_START_SECONDS) {
       this.state = RoundState.WARMUP;
+      this.#runV3Decision(books, nowMs, null);
       return;
     }
 
@@ -302,9 +365,12 @@ export class RoundRunner {
         reason: this.strategyPauseReason,
         breaches: invariantBreaches,
       });
+      this.#runV3Decision(books, nowMs, decision);
       return decision;
     }
     this.strategyPauseReason = null;
+
+    this.#runV3Decision(books, nowMs, decision);
 
     // Intents are logged even when nothing is sent: this is what lets you
     // reconstruct WHY a rung was absent (band gate, clamp).
@@ -346,6 +412,100 @@ export class RoundRunner {
     }, nowMs);
   }
 
+  #runV3Decision(books, nowMs, v2Decision) {
+    if (!this.v3Enabled) return null;
+    if (
+      this.lastV3DecisionAtMs > 0 &&
+      nowMs - this.lastV3DecisionAtMs < this.params.V3_DECISION_INTERVAL_MS
+    ) return this.lastHybridDecision;
+    this.lastV3DecisionAtMs = nowMs;
+    const ownOrders = [...this.orders.live.values()];
+    const snapshot = this.featureEngine.buildSnapshot({
+      books,
+      ownOrders,
+      priceToBeat: this.priceToBeat,
+      decisionTimeMs: nowMs,
+      roundSecond: this.sec,
+    });
+    const prediction = this.probabilityModel.predict(snapshot);
+    const decision = this.hybridController.decide({
+      inventory: this.inventory,
+      books,
+      signalSnapshot: snapshot,
+      probability: prediction,
+      pairRegime: v2Decision?.regime ?? this.currentPairRegime,
+      v2Decision,
+      ownOrders,
+    });
+    const actualV2Action = Object.freeze({
+      type: 'V2_QUOTE_RECONCILE',
+      rungs: Object.freeze((v2Decision?.rungs ?? []).map((rung) =>
+        Object.freeze({
+          leg: rung.leg,
+          limitMils: rung.mils,
+          shares: rung.shares,
+          opening: Boolean(rung.opening),
+        })
+      )),
+      suppressed: Object.freeze([...(v2Decision?.suppressed ?? [])]),
+    });
+    const makerSkew = signalInformedMakerSkew({
+      snapshot,
+      prediction,
+      params: this.params,
+    });
+    this.lastSignalSnapshot = snapshot;
+    this.lastProbabilityPrediction = prediction;
+    this.lastHybridDecision = decision;
+    this.lastActualV2Action = actualV2Action;
+    this.lastMakerSkew = makerSkew;
+    this.recorder.record(ev.signalSnapshot(this.roundSlug, snapshot));
+    this.recorder.record(
+      ev.probabilityPrediction(this.roundSlug, snapshot.snapshotId, prediction)
+    );
+    this.recorder.record(
+      ev.actionCandidates(this.roundSlug, snapshot.snapshotId, decision.candidates)
+    );
+    this.recorder.record(
+      ev.actionSelected(this.roundSlug, snapshot.snapshotId, decision.selected)
+    );
+    if (decision.rejected.length) {
+      this.recorder.record(
+        ev.actionRejected(this.roundSlug, snapshot.snapshotId, decision.rejected)
+      );
+    }
+    // V3 is intentionally non-executing for this shadow-ready milestone.
+    // OrderManager receives only the unchanged V2 rung set below.
+    this.recorder.record(ev.v3ShadowDecision({
+      rid: this.roundSlug,
+      snapshotId: snapshot.snapshotId,
+      prediction,
+      selected: decision.selected,
+      portfolio: decision.portfolio,
+      actualV2Action,
+      makerSkew,
+    }));
+    return decision;
+  }
+
+  v3Status() {
+    if (!this.v3Enabled) {
+      return Object.freeze({ engineMode: 'V2', enabled: false, shadowOnly: true });
+    }
+    return Object.freeze({
+      engineMode: 'V3 SHADOW',
+      enabled: true,
+      shadowOnly: true,
+      signal: this.lastSignalSnapshot,
+      probability: this.lastProbabilityPrediction,
+      selectedAction: this.lastHybridDecision?.selected ?? null,
+      candidateCount: this.lastHybridDecision?.candidates?.length ?? 0,
+      actualV2Action: this.lastActualV2Action,
+      makerSkew: this.lastMakerSkew,
+      execution: 'V2_ONLY',
+    });
+  }
+
   /**
    * @param {Object} fill {leg, price (0..1), size, ts (epoch s)}
    */
@@ -362,13 +522,51 @@ export class RoundRunner {
 
     const mils = toMils(fill.price);
     const t = secondsIntoRound(fill.ts, this.windowStartEpoch);
+    const orderProvenance = this.orders.provenanceFor(orderId);
+    const fillProvenance = {
+      strategyIntent:
+        fill.strategyIntent ?? fill.intent ?? orderProvenance.strategyIntent,
+      actionCandidateId:
+        fill.actionCandidateId ?? orderProvenance.actionCandidateId,
+      signalSnapshotId:
+        fill.signalSnapshotId ?? orderProvenance.signalSnapshotId,
+      modelVersion: fill.modelVersion ?? orderProvenance.modelVersion,
+      expectedEdgeAtDecision:
+        fill.expectedEdgeAtDecision ?? orderProvenance.expectedEdgeAtDecision,
+    };
     if (this.firstFillSecond === null) this.firstFillSecond = t;
     this.lastFillSecond = t;
-    this.inventory.addFill(fill.leg, mils, fill.size, fill.ts, {
+    const oppositeBefore = this.inventory.unmatchedShares(
+      fill.leg === 'UP' ? 'DOWN' : 'UP'
+    );
+    const lot = this.inventory.addFill(fill.leg, mils, fill.size, fill.ts, {
       feeUsd: fill.fee ?? 0,
       orderId,
       id: fill.fillId ?? undefined,
+      intent: fillProvenance.strategyIntent,
+      ...fillProvenance,
     });
+    if (this.pairCompletionTracker && lot) {
+      const completedShares = Math.min(Number(fill.size), oppositeBefore);
+      if (completedShares > 0) {
+        this.pairCompletionTracker.complete({
+          complementLeg: fill.leg,
+          shares: completedShares,
+          priceMils: mils,
+          roundSecond: t,
+          snapshot: this.lastSignalSnapshot,
+        });
+      }
+      const firstLegShares = Number(fill.size) - completedShares;
+      if (firstLegShares > 0) {
+        this.pairCompletionTracker.start({
+          lot,
+          shares: firstLegShares,
+          roundSecond: t,
+          snapshot: this.lastSignalSnapshot,
+        });
+      }
+    }
     const aheadLeg =
       this.inventory.unmatchedShares('UP') > 0
         ? 'UP'
@@ -419,6 +617,7 @@ export class RoundRunner {
           status: fill.status ?? null,
           transactionHash: fill.transactionHash ?? null,
           raw: fill.raw ?? null,
+          ...fillProvenance,
         },
         mkt,
         {
@@ -526,6 +725,7 @@ export class RoundRunner {
     const grossPnlUsd = roundAccounting(matched - costUsd);
     const pnlUsd = Math.round((grossPnlUsd - this.feeUsd) * 1e6) / 1e6;
     this.state = RoundState.DONE;
+    this.pairCompletionTracker?.settle('HEDGED', this.sec);
     const out = {
       roundSlug: this.roundSlug,
       winner: 'HEDGED',
@@ -587,6 +787,7 @@ export class RoundRunner {
       }
     }
     this.state = RoundState.DONE;
+    this.pairCompletionTracker?.settle(winner, this.sec);
     const out = {
       ...result,
       grossPnlUsd: result.pnlUsd,

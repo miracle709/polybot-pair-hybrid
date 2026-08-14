@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { SourceQuality } from '../signals/sourceQuality.js';
 
 /**
  * The Chainlink open that a round settles against.
@@ -95,6 +96,8 @@ export class HttpPriceToBeatProvider extends PriceToBeatProvider {
     return {
       ptb,
       src: d.price_to_beat_source ?? 'unknown',
+      sourceQuality:
+        d.price_to_beat_source_quality ?? d.source_quality ?? null,
       poly: Number.isFinite(Number(d.polymarket_btc_usd)) ? Number(d.polymarket_btc_usd) : null,
       binance: Number.isFinite(Number(d.binance_btc_usd)) ? Number(d.binance_btc_usd) : null,
       sec: Number.isFinite(Number(d.seconds_into_round)) ? Number(d.seconds_into_round) : null,
@@ -162,6 +165,8 @@ export class ChainlinkPriceToBeatProvider extends PriceToBeatProvider {
         binance: null,
         sec: null,
         updatedAt: Number(updatedAt),
+        arrivalTimeMs: Date.now(),
+        sourceQuality: SourceQuality.APPROXIMATE,
       };
       this.emit('price_to_beat', out);
       return out;
@@ -299,7 +304,13 @@ export class GammaPriceToBeatProvider extends PriceToBeatProvider {
     const tryField = (k) => {
       const v = market[k];
       const n = typeof v === 'string' ? Number(v) : v;
-      return sane(n) ? { ptb: n, src: `gamma:${k}` } : null;
+      return sane(n)
+        ? {
+            ptb: n,
+            src: `gamma:${k}`,
+            sourceQuality: SourceQuality.AUTHORITATIVE,
+          }
+        : null;
     };
 
     if (field) return tryField(field);
@@ -317,7 +328,14 @@ export class GammaPriceToBeatProvider extends PriceToBeatProvider {
         const m = text.match(/\$\s?(\d{2,3}[,\s]?\d{3}(?:\.\d+)?)/);
         if (!m) continue;
         const n = Number(m[1].replace(/[,\s]/g, ''));
-        if (sane(n)) return { ptb: n, src: `gamma:${k}:text`, poly: null, binance: null, sec: null };
+        if (sane(n)) return {
+          ptb: n,
+          src: `gamma:${k}:text`,
+          sourceQuality: SourceQuality.AUTHORITATIVE,
+          poly: null,
+          binance: null,
+          sec: null,
+        };
       }
     }
     return null;

@@ -73,6 +73,49 @@ export const PARAMS = {
   /** Do not top up the side that already owns unmatched inventory. */
   REPLENISH_AHEAD_LEG: false,
 
+  // ------------------------------------------------------- V3 shadow engine
+  /** V2 remains the live execution path unless this is explicitly enabled. */
+  V3_ENABLED: false,
+  /** Shadow decisions are recorded but can never submit directional orders. */
+  V3_SHADOW_ONLY: true,
+  DIRECTIONAL_ENABLED: false,
+  DIRECTIONAL_MAKER_ENABLED: false,
+  DIRECTIONAL_TAKER_ENABLED: false,
+  ALLOW_MODEL_TO_DEFER_PAIR_COMPLETION: false,
+
+  /** Directional data freshness is intentionally far below signal horizons. */
+  SIGNAL_BOOK_MAX_AGE_MS: 1000,
+  SIGNAL_BTC_MAX_AGE_MS: 1000,
+  SIGNAL_REFERENCE_MAX_AGE_MS: 1500,
+  V3_DECISION_INTERVAL_MS: 250,
+  SIGNAL_VOLATILITY_WINDOW_MS: 30000,
+  SIGNAL_TWAP_WINDOW_MS: 30000,
+
+  /** Action-specific expected execution costs. */
+  V3_MAKER_FEE_BPS: 0,
+  V3_BUILDER_FEE_BPS: 0,
+  POLYMARKET_TAKER_FEE_RATE: 0.07,
+  DIRECTIONAL_MAKER_RESERVE_BPS: 10,
+  DIRECTIONAL_TAKER_RESERVE_BPS: 25,
+
+  /** Explicit probabilistic risk budget; pair economics remain separate. */
+  MAX_DIRECTIONAL_LOSS_USD: 5,
+  MAX_DIRECTIONAL_SHARES: 10,
+  DIRECTIONAL_SIZE_STEP_SHARES: 1,
+  MIN_DIRECTIONAL_ROBUST_EV_USD: 0.05,
+  MIN_DIRECTIONAL_TAKER_ROBUST_EV_USD: 0.15,
+  MIN_DIRECTIONAL_STRONG_ROBUST_EV_USD: 0.25,
+  MAX_TAKER_DEPTH_FRACTION: 0.25,
+  DIRECTIONAL_REDUCE_START_SECONDS: 210,
+  DIRECTIONAL_STRONG_ONLY_START_SECONDS: 260,
+  DIRECTIONAL_STOP_NEW_SECONDS: 270,
+  DIRECTIONAL_LATE_SIZE_FRACTION: 0.5,
+
+  /** Signal-aware quote skew is scaffolded and disabled for this milestone. */
+  SIGNAL_MAKER_SKEW_ENABLED: false,
+  MAX_SIGNAL_SKEW_MILS: 10,
+  MAX_SIGNAL_SIZE_TILT_FRACTION: 0.25,
+
   // ------------------------------------------------------------- band gate
   /**
    * [M] He quotes only while the leg's own implied probability sits inside

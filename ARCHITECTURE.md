@@ -1,5 +1,10 @@
 # Architecture
 
+V2 remains the only exchange execution path. V3 is a shadow-only parallel
+decision layer feeding the same authoritative inventory state; it is not a
+second bot and it does not duplicate accounting or order management. Full V3
+details are in [`V3.md`](V3.md).
+
 ## Layering
 
 Four layers, each depending only on the ones above it. Nothing in `strategy`
@@ -10,10 +15,12 @@ config          config.js
                 measured parameters plus V2 pair-cycle and risk constraints.
                         │
 domain          util.js · book.js · inventory.js · pairEconomics.js
+                portfolioMath.js · actions/pairInteraction.js
                 prices, books, immutable FIFO lots, complement economics.
                 Pure. No I/O, no venue concepts, fully unit-testable.
                         │
-strategy        quoter.js · orderManager.js · roundRunner.js · engine.js
+strategy        quoter.js · hybridController.js · orderManager.js
+                roundRunner.js · engine.js · signals/* · models/*
                 the decision surface and its lifecycle.
                 Talks to the venue only through ExchangeAdapter.
                         │

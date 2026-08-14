@@ -1,5 +1,10 @@
 # Trading Strategy — BTC 5m V2 Pair-Cycle Engine
 
+> Activation note: V2 remains the only execution path. V3 is now implemented
+> as a unified portfolio/action **shadow scaffold**, disabled by default. It
+> does not submit directional orders. See [`V3.md`](V3.md) for exact math,
+> causality, source-quality, model, controller, telemetry, and research details.
+
 This document explains the **implemented** trading algorithm as it runs today
 (`src/quoter.js`, `src/config.js`, `src/roundRunner.js`, `src/orderManager.js`,
 `src/inventory.js`). Parameter values below are the **current code defaults**.
@@ -32,7 +37,9 @@ source wallet. It treated `avg(UP) + avg(DOWN) < 1.00` as a measured result.
 economics before strategy-generated completion. Global average pair cost is
 still reported for compatibility and diagnosis; it is not the control input.
 
-There is no directional signal and no price forecast. Share tilt aligns with the
+The active V2 path has no directional signal and no price forecast. V3 may
+calculate shadow signals and hypothetical actions when explicitly enabled, but
+those do not alter V2 orders. Share tilt aligns with the
 eventual winner about **48%** of the time — a coinflip paid for by unmatched
 inventory. Most of the realised edge is **intra-round mean reversion** (buying
 each leg on its own local dip), not the ~1¢ simultaneous-spread floor.
