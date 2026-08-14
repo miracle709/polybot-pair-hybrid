@@ -5,6 +5,10 @@ import {
   CONDITIONAL_TOKEN_DECIMALS,
 } from '@polymarket/clob-client-v2';
 import { ExchangeAdapter } from './interface.js';
+import {
+  POLYMARKET_MIN_ORDER_NOTIONAL_USD,
+  POLYMARKET_MIN_ORDER_SHARES,
+} from '../orderConstraints.js';
 import { RateLimiter, PRIORITY } from '../live/rateLimiter.js';
 
 const REQUIRED = [
@@ -157,6 +161,21 @@ export class PolymarketLiveAdapter extends ExchangeAdapter {
     postOnly = false,
     orderType = OrderType.GTC,
   }) {
+    if (!(Number(size) >= POLYMARKET_MIN_ORDER_SHARES)) {
+      throw new Error(
+        `size ${size} lower than the minimum: ${POLYMARKET_MIN_ORDER_SHARES}`
+      );
+    }
+    const orderNotionalUsd = Number(price) * Number(size);
+    if (
+      !Number.isFinite(orderNotionalUsd) ||
+      orderNotionalUsd + 1e-12 < POLYMARKET_MIN_ORDER_NOTIONAL_USD
+    ) {
+      throw new Error(
+        `order notional $${Number(orderNotionalUsd.toFixed(6))} ` +
+          `lower than the minimum: $${POLYMARKET_MIN_ORDER_NOTIONAL_USD}`
+      );
+    }
     await this.limiter.acquire(1, PRIORITY.PLACE);
     const options = await this.#tokenOptions(tokenId);
     const order = await this.client[this.methods.createOrder](

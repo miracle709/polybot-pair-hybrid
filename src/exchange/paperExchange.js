@@ -1,10 +1,11 @@
 import { ExchangeAdapter } from './interface.js';
 import { toMils, roundShares } from '../util.js';
+import {
+  POLYMARKET_MIN_ORDER_NOTIONAL_USD,
+  POLYMARKET_MIN_ORDER_SHARES,
+} from '../orderConstraints.js';
 import { cryptoTakerFeeUsd } from '../fees.js';
 import { PRIORITY } from '../live/rateLimiter.js';
-
-const VENUE_MIN_SHARES = 5;
-const VENUE_MIN_NOTIONAL_USD = 1;
 
 /**
  * Queue-aware paper / JSONL-replay exchange (no real CLOB orders).
@@ -86,10 +87,13 @@ export class PaperExchange extends ExchangeAdapter {
     }
   }
 
-  static #marketableNotionalReason(price, size) {
+  static #minimumNotionalReason(price, size) {
     const notional = Number(price) * Number(size);
-    const usd = Math.round(notional * 100) / 100;
-    return `invalid amount for a marketable BUY order ($${usd}), min size: $${VENUE_MIN_NOTIONAL_USD}`;
+    const usd = Number(notional.toFixed(6));
+    return (
+      `order notional $${usd} lower than the minimum: ` +
+      `$${POLYMARKET_MIN_ORDER_NOTIONAL_USD}`
+    );
   }
 
   setFillHandler(handler) {
@@ -147,21 +151,21 @@ export class PaperExchange extends ExchangeAdapter {
     const effectivePostOnly = fak ? false : postOnly;
 
     // Match Polymarket venue minimum so paper cannot credit illegal top-ups.
-    if (!(Number(size) >= VENUE_MIN_SHARES)) {
+    if (!(Number(size) >= POLYMARKET_MIN_ORDER_SHARES)) {
       this.#reject(
         null,
-        `size ${size} lower than the minimum: ${VENUE_MIN_SHARES}`
+        `size ${size} lower than the minimum: ${POLYMARKET_MIN_ORDER_SHARES}`
       );
     }
 
-    // $1 min notional applies to marketable paths only (FAK / non-post-only).
+    // Polymarket rejects every order whose submitted price x size is under $1.
     if (
-      (fak || effectivePostOnly === false) &&
-      Number(price) * Number(size) < VENUE_MIN_NOTIONAL_USD
+      Number(price) * Number(size) + 1e-12 <
+      POLYMARKET_MIN_ORDER_NOTIONAL_USD
     ) {
       this.#reject(
         null,
-        PaperExchange.#marketableNotionalReason(price, size)
+        PaperExchange.#minimumNotionalReason(price, size)
       );
     }
 
@@ -267,15 +271,6 @@ export class PaperExchange extends ExchangeAdapter {
         o.marketableChecked = true;
         if (o.postOnly) {
           this.#reject(id, 'post_only_would_cross', { throwError: false });
-          continue;
-        }
-        const limitPrice = o.mils / 1000;
-        if (limitPrice * o.remaining < VENUE_MIN_NOTIONAL_USD) {
-          this.#reject(
-            id,
-            PaperExchange.#marketableNotionalReason(limitPrice, o.remaining),
-            { throwError: false }
-          );
           continue;
         }
         const feeRate = this.takerFeeRate ?? 0.07;

@@ -120,6 +120,13 @@ clip size across a round (33.5 shares on the opening fill, 12–18 in the last
 minute) is *partial-fill censoring*, not a taper rule — p90 clip is exactly
 90.0 in every time bucket and every price bucket. Do not implement a taper.
 
+That describes the parent sizing signal, not venue validity. Every individual
+submitted order must also satisfy Polymarket's **$1 minimum notional**. The
+effective rung minimum is `max(MIN_RUNG_SHARES, ceil(1 / price))`, aligned to
+`RUNG_SIZE_STEP_SHARES`; at $0.10 this is 10 shares. A weak allocation is
+consolidated into one legal rung or withheld when the risk budget cannot fund
+it.
+
 V2 economics defaults are `PAIR_TARGET_MILS=985`,
 `PAIR_EXECUTION_BUFFER_MILS=5`, `PAIR_HARD_MAX_MILS=995`,
 `MAX_UNMATCHED_SHARES=10`, and `MAX_UNMATCHED_AGE_SECONDS=60`.
@@ -225,6 +232,7 @@ PAPER_CANCEL_LATENCY_MS=600
 PAPER_TRADE_FRACTION=0.6
 DYNAMIC_SIZING=1
 RUNG_DEPTH_FRACTION=0.10
+MIN_ORDER_NOTIONAL_USD=1
 MIN_RUNG_SHARES=5
 MAX_RUNG_SHARES=20
 MAX_LEG_SHARES=20
@@ -250,7 +258,8 @@ MIN_REQUOTE_INTERVAL_MS=500
 
 Dynamic sizing targets 10% of resting bid depth within two ticks per leg,
 caps the aggregate leg allocation at 20 shares, and splits it across the
-normal two-level post-only ladder. Filled cost plus desired resting orders
+normal two-level post-only ladder while keeping every order at or above the
+$1 venue minimum. Filled cost plus desired resting orders
 cannot exceed the hard round budget, and one-sided fills cannot exceed the
 tilt budget. Marketable paper fills (placement latency walking into the ask)
 use the Polymarket taker fee curve with
@@ -476,7 +485,8 @@ market still fully reconstructable from the log alone.
 
 1. Paper simulation, 24h. Confirm churn ratio, resolver miss rate, and risk limits.
 2. Resolve your real fee tier; set `FEE_BPS`.
-3. `npm run live` with `MIN_RUNG_SHARES=5`, `MAX_LEG_SHARES=20`, and tight
+3. `npm run live` with `MIN_ORDER_NOTIONAL_USD=1`, `MIN_RUNG_SHARES=5`,
+   `MAX_LEG_SHARES=20`, and tight
    `ROUND_HARD_CAP` / `MAX_OPEN_NOTIONAL` / `MAX_DAILY_LOSS`, one round.
 4. Scale only after `metrics.js` passes on **your own** fills.
 5. Redeem winning CTF balances out of band.

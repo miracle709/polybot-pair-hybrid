@@ -13,6 +13,7 @@ import {
 import { recoverLegacyPaperSnapshots } from './legacyPaperRecovery.js';
 import { reconcilePendingSettlements } from './accountReconcile.js';
 import { PARAMS, GUARDS } from '../config.js';
+import { minimumOrderSharesForParams } from '../orderConstraints.js';
 import { roundShares } from '../util.js';
 import { cryptoTakerFeeUsd } from '../fees.js';
 import {
@@ -938,12 +939,22 @@ export class Supervisor extends EventEmitter {
         const economicSize = isPaper
           ? roundShares(size)
           : Math.floor(size / step) * step;
-        if (economicSize < (isPaper ? flatEps : step)) {
-          return {
+        const minimumOrderShares = minimumOrderSharesForParams(
+          economicCapMils,
+          this.params ?? PARAMS
+        );
+        if (economicSize < minimumOrderShares) {
+          const minimumOrderNotionalUsd = Math.max(
+            PARAMS.MIN_ORDER_NOTIONAL_USD,
+            (this.params ?? PARAMS).MIN_ORDER_NOTIONAL_USD ??
+              PARAMS.MIN_ORDER_NOTIONAL_USD
+          );
+          this.pauseReason = 'hedge_below_venue_minimum';
+          const result = {
             ok: false,
-            code: 'hedge_not_economic',
+            code: 'hedge_below_venue_minimum',
             paused: true,
-            pauseReason: 'hedge_not_economic',
+            pauseReason: 'hedge_below_venue_minimum',
             cancelled,
             hedges,
             leg,
@@ -952,8 +963,21 @@ export class Supervisor extends EventEmitter {
             economicCapMils,
             requestedShares: size,
             economicDepth,
-            error: 'hedge_not_economic: no venue-legal size inside cap',
+            minimumOrderShares,
+            minimumOrderNotionalUsd,
+            error:
+              `hedge_below_venue_minimum: ${economicSize} shares at ` +
+              `$${economicCapMils / 1000} cannot satisfy the $` +
+              `${minimumOrderNotionalUsd} order minimum`,
           };
+          this.recorder?.record?.({
+            t: Date.now(),
+            type: 'hedge_below_venue_minimum',
+            round: runner.roundSlug,
+            sec: runner.sec,
+            ...result,
+          });
+          return result;
         }
 
         const tokenId = runner.tokenIds?.[leg] ?? market.tokenIds?.[leg];
@@ -1398,6 +1422,7 @@ export class Supervisor extends EventEmitter {
         depthFraction: this.params.RUNG_DEPTH_FRACTION,
         depthTicks: this.params.DEPTH_SIZING_TICKS,
         minShares: this.params.MIN_RUNG_SHARES,
+        minOrderNotionalUsd: this.params.MIN_ORDER_NOTIONAL_USD,
         maxShares: this.params.MAX_RUNG_SHARES,
         maxLegShares: this.params.MAX_LEG_SHARES,
         entryGateSeconds: this.params.ENTRY_GATE_SECONDS,

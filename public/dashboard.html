@@ -227,6 +227,7 @@
           ${row('Sizing',d.sizing?.dynamic?'Dynamic':'Fixed')}
           ${row('Depth sizing',finite(d.sizing?.depthFraction)?`${num(d.sizing.depthFraction*100,1)}% within ${d.sizing.depthTicks} ticks`:'—')}
           ${row('Share bounds',`${num(d.sizing?.minShares,0)} – ${num(d.sizing?.maxShares,0)}`)}
+          ${row('Minimum order notional',usd(d.sizing?.minOrderNotionalUsd))}
           ${row('Opening gate',`${num(d.sizing?.entryGateSeconds,0)}s`)}
           ${row('Opening max size',`${num(d.sizing?.openingMaxShares,0)} sh / leg`)}
           ${row('Opening conservative until',`${num(d.sizing?.openingUntilSeconds,0)}s`)}

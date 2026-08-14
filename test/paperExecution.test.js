@@ -100,24 +100,47 @@ test('marketable place below $1 notional is rejected', async () => {
         roundSlug: 'round',
         postOnly: false,
       }),
-    /invalid amount for a marketable BUY order/
+    /order notional \$0.75 lower than the minimum: \$1/
   );
   assert.equal(exchange.open.size, 0);
-  assert.match(rejected[0].reason, /min size: \$1/);
+  assert.match(rejected[0].reason, /minimum: \$1/);
 });
 
-test('resting post-only below $1 notional is still accepted at place', async () => {
+test('resting post-only below $1 notional is rejected too', async () => {
   const exchange = new PaperExchange({ placeLatencyMs: 0 });
+  await assert.rejects(
+    () =>
+      exchange.placeLimitBuy({
+        tokenId: 'UP',
+        price: 0.15,
+        size: 5,
+        roundSlug: 'round',
+        postOnly: true,
+      }),
+    /order notional \$0.75 lower than the minimum: \$1/
+  );
+  assert.equal(exchange.open.size, 0);
+});
+
+test('order at $0.10 requires 10 shares and accepts the boundary', async () => {
+  const exchange = new PaperExchange({ placeLatencyMs: 0 });
+  await assert.rejects(
+    () =>
+      exchange.placeLimitBuy({
+        tokenId: 'UP',
+        price: 0.1,
+        size: 9,
+        roundSlug: 'round',
+      }),
+    /order notional \$0.9 lower than the minimum: \$1/
+  );
   const { orderId } = await exchange.placeLimitBuy({
     tokenId: 'UP',
-    price: 0.15,
-    size: 5,
+    price: 0.1,
+    size: 10,
     roundSlug: 'round',
-    postOnly: true,
   });
-  assert.ok(orderId);
-  assert.equal(exchange.open.size, 1);
-  assert.equal(exchange.open.get(orderId).remaining, 5);
+  assert.equal(exchange.open.get(orderId).remaining, 10);
 });
 
 test('tradeFraction scales maker fill from bid shrinkage', async () => {

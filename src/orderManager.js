@@ -1,4 +1,5 @@
 import { PARAMS } from './config.js';
+import { minimumOrderSharesForParams } from './orderConstraints.js';
 import { rungKey, roundShares, toProb } from './util.js';
 import { NullRecorder } from './log/recorder.js';
 import * as ev from './log/schema.js';
@@ -128,8 +129,8 @@ export class OrderManager {
 
     // 2. anything wanted that is not live gets posted; anything live but
     //    partially consumed gets topped back up to the full rung.
-    const minShares = this.params.MIN_RUNG_SHARES ?? 5;
     for (const [key, want] of wanted) {
+      const minShares = minimumOrderSharesForParams(want.mils, this.params);
       const have = this.live.get(key);
       if (!have) {
         toPlace.push({ ...want, replenish: false });
@@ -150,8 +151,8 @@ export class OrderManager {
             replenish: true,
           });
         } else if (deficit > 0.01) {
-          // Polymarket rejects size < minShares. Cancel and re-post the
-          // full desired rung instead of placing an illegal 1..(min-1) top-up.
+          // Polymarket rejects a top-up below its share or $1 notional floor.
+          // Cancel and re-post the full desired rung instead.
           toCancel.push(have);
           toPlace.push({ ...want, replenish: false });
         }
@@ -229,10 +230,15 @@ export class OrderManager {
       this.logger.warn?.(`no tokenId for leg ${rung.leg} in ${roundCtx.roundSlug}`);
       return;
     }
-    const minShares = this.params.MIN_RUNG_SHARES ?? 5;
+    const minShares = minimumOrderSharesForParams(rung.mils, this.params);
     if (!(rung.shares >= minShares)) {
+      const minimumNotionalUsd = Math.max(
+        1,
+        this.params.MIN_ORDER_NOTIONAL_USD ?? 1
+      );
       const err = new Error(
-        `size ${rung.shares} lower than minimum ${minShares}`
+        `size ${rung.shares} lower than minimum ${minShares} at ` +
+          `$${toProb(rung.mils)} ($${minimumNotionalUsd} minimum notional)`
       );
       this.stats.placeErrors += 1;
       const rejectedId = `rejected-${++this.rejectedSeq}`;
@@ -506,8 +512,12 @@ export class OrderManager {
       throw new Error(`placeProtectionFak: no tokenId for ${leg}`);
     }
     const size = roundShares(shares);
-    if (size < 0.01) {
-      throw new Error(`placeProtectionFak: size too small (${shares})`);
+    const minimumShares = minimumOrderSharesForParams(mils, this.params);
+    if (size < minimumShares) {
+      throw new Error(
+        `placeProtectionFak: size ${size} lower than minimum ` +
+          `${minimumShares} at $${toProb(mils)}`
+      );
     }
     const price = toProb(mils);
     try {

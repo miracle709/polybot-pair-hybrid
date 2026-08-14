@@ -324,6 +324,27 @@ test('live adapter sends ordinary quotes as post-only when requested', async () 
   assert.deepEqual(posts[0], [{ signed: true }, OrderType.GTC, true]);
 });
 
+test('live adapter rejects a sub-$1 order before calling the CLOB', async () => {
+  let calls = 0;
+  const client = {
+    async createOrder() { calls += 1; return { signed: true }; },
+    async postOrder() { calls += 1; return { orderID: 'must-not-post' }; },
+    async cancelOrders() {},
+    async getOpenOrders() { return []; },
+    async getBalanceAllowance() { return { balance: '0' }; },
+  };
+  const adapter = new PolymarketLiveAdapter({
+    client,
+    limiter: new RL({ capacity: 10, refillPerSec: 1000, logger: quiet }),
+    logger: quiet,
+  });
+  await assert.rejects(
+    () => adapter.placeLimitBuy({ tokenId: 't', price: 0.1, size: 9 }),
+    /order notional \$0.9 lower than the minimum: \$1/
+  );
+  assert.equal(calls, 0);
+});
+
 test('live adapter posts FAK hedges as OrderType.FAK without post-only', async () => {
   const { OrderType } = await import('@polymarket/clob-client-v2');
   const posts = [];
@@ -1120,6 +1141,70 @@ test('Supervisor.autoBalance refuses an uneconomic complementary hedge', async (
   assert.equal(supervisor.pausedRound, runner.roundSlug);
 });
 
+test('Supervisor.autoBalance keeps a sub-minimum residual paused without overbuying', async () => {
+  const { LegBook } = await import('../src/book.js');
+  const { RoundRunner, RoundState } = await import('../src/roundRunner.js');
+
+  let submitted = 0;
+  const fakeLive = {
+    mode: 'live',
+    async placeLimitBuy() {
+      submitted += 1;
+      return { orderId: 'must-not-submit', filledShares: 0 };
+    },
+    async cancelOrders() {},
+    async cancelEverything() { return { cancelled: 0 }; },
+  };
+  const runner = new RoundRunner({
+    roundSlug: 'btc-updown-5m-small-residual',
+    windowStartEpoch: 1,
+    tokenIds: { UP: 'u', DOWN: 'd' },
+    exchange: fakeLive,
+    logger: quiet,
+    recorder: { record() {}, async recordSettlement() {} },
+  });
+  // A legal parent order can leave this four-share partial-fill residual.
+  runner.inventory.addFill('UP', 400, 4, 1);
+  runner.state = RoundState.QUOTING;
+
+  const supervisor = Object.create(Supervisor.prototype);
+  supervisor.autoBalanceInFlight = false;
+  supervisor.halted = false;
+  supervisor.logger = quiet;
+  supervisor.pausedRound = null;
+  supervisor.pauseReason = null;
+  supervisor.params = { ...P, POLYMARKET_TAKER_FEE_RATE: 0 };
+  supervisor.currentMarket = {
+    roundSlug: runner.roundSlug,
+    tokenIds: runner.tokenIds,
+  };
+  supervisor.lastBooks = {
+    UP: new LegBook(
+      [{ price: 0.40, size: 100 }],
+      [{ price: 0.41, size: 100 }],
+      10
+    ),
+    DOWN: new LegBook(
+      [{ price: 0.51, size: 100 }],
+      [{ price: 0.52, size: 100 }],
+      10
+    ),
+  };
+  supervisor.adapter = fakeLive;
+  supervisor.recorder = { record() {} };
+  supervisor.settlements = { has: () => false };
+  supervisor.engine = { current: runner };
+
+  const result = await supervisor.autoBalance();
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'hedge_below_venue_minimum');
+  assert.equal(result.minimumOrderShares, 5);
+  assert.equal(result.requestedShares, 4);
+  assert.equal(result.tiltAfter, 4);
+  assert.equal(submitted, 0);
+  assert.equal(supervisor.pausedRound, runner.roundSlug);
+});
+
 test('Auto Balance does not call flat-but-negative inventory profit protection', async () => {
   const { RoundRunner, RoundState } = await import('../src/roundRunner.js');
   const { PaperExchange } = await import('../src/exchange/paperExchange.js');
@@ -1176,7 +1261,7 @@ test('live-style autoBalance confirms CLOB fill, residual retry, no double inven
     mode: 'live',
     async placeLimitBuy({ size }) {
       placeSizes.push(size);
-      const filled = placeSizes.length === 1 ? Math.min(6, size) : size;
+      const filled = placeSizes.length === 1 ? Math.min(5, size) : size;
       return {
         orderId: `live-fak-${placeSizes.length}`,
         filledShares: filled,
@@ -1252,21 +1337,21 @@ test('live-style autoBalance confirms CLOB fill, residual retry, no double inven
 
   const result = await supervisor.autoBalance();
   assert.equal(result.ok, true);
-  assert.deepEqual(placeSizes, [10, 4], 'second FAK is residual only');
+  assert.deepEqual(placeSizes, [10, 5], 'second FAK is venue-legal residual only');
   assert.equal(runner.inventory.tiltShares(), 0);
   assert.equal(runner.inventory.shares('DOWN'), 20);
   const downAfterLock = runner.inventory.shares('DOWN');
 
   const { cryptoTakerFeeUsd } = await import('../src/fees.js');
-  const fee1 = cryptoTakerFeeUsd(6, 0.52, 0.07);
-  const fee2 = cryptoTakerFeeUsd(4, 0.52, 0.07);
+  const fee1 = cryptoTakerFeeUsd(5, 0.52, 0.07);
+  const fee2 = cryptoTakerFeeUsd(5, 0.52, 0.07);
   const led1 = runner.orders.orderLedger.get('live-fak-1');
   const led2 = runner.orders.orderLedger.get('live-fak-2');
   assert.equal(led1.role, 'TAKER');
-  assert.equal(led1.filledShares, 6);
+  assert.equal(led1.filledShares, 5);
   assert.equal(led1.feeUsd, fee1);
   assert.equal(led2.role, 'TAKER');
-  assert.equal(led2.filledShares, 4);
+  assert.equal(led2.filledShares, 5);
   assert.equal(led2.feeUsd, fee2);
   assert.equal(runner.feeUsd, Math.round((fee1 + fee2) * 1e5) / 1e5);
   const feeUsdBeforeReplay = runner.feeUsd;
@@ -1275,14 +1360,14 @@ test('live-style autoBalance confirms CLOB fill, residual retry, no double inven
   runner.onFill({
     leg: 'DOWN',
     price: 0.52,
-    size: 6,
+    size: 5,
     fee: 99,
     ts: 101,
     orderId: 'live-fak-1',
     role: 'TAKER',
   });
   assert.equal(runner.inventory.shares('DOWN'), downAfterLock);
-  assert.equal(led1.filledShares, 6);
+  assert.equal(led1.filledShares, 5);
   assert.equal(led1.feeUsd, fee1);
   assert.equal(runner.feeUsd, feeUsdBeforeReplay);
 
@@ -1915,6 +2000,36 @@ test('order ledger retains resting, partial, filled, and cancelled lifecycle sta
   await om.reconcile([], ctx, 3);
   assert.equal(om.orderLedger.get('o2').status, 'cancelled');
   assert.equal(om.ordersSnapshot()[0].roundId, 'round-1');
+});
+
+test('OrderManager blocks a sub-$1 desired order before exchange submission', async () => {
+  let submitted = 0;
+  const exchange = {
+    async placeLimitBuy() {
+      submitted += 1;
+      return { orderId: 'must-not-submit' };
+    },
+    async cancelOrders() {},
+  };
+  const om = new OrderManager(exchange, {
+    roundSlug: 'round-notional-min',
+    logger: quiet,
+    params: { ...P, MIN_REQUOTE_INTERVAL_MS: 0 },
+  });
+  await om.reconcile(
+    [{ leg: 'UP', mils: 100, shares: 9, offsetTicks: 1, key: 'UP@100' }],
+    {
+      roundSlug: 'round-notional-min',
+      tokenIds: { UP: 'u', DOWN: 'd' },
+    },
+    1
+  );
+  assert.equal(submitted, 0);
+  assert.equal(om.stats.placeErrors, 1);
+  assert.match(
+    om.ordersSnapshot()[0].reason,
+    /size 9 lower than minimum 10/
+  );
 });
 
 test('replenish deficit below MIN_RUNG_SHARES cancel-replaces full size', async () => {

@@ -99,6 +99,10 @@ export function buildStrategyConfig({ feeMode }) {
       'RUNG_DEPTH_FRACTION',
       PARAMS.RUNG_DEPTH_FRACTION
     ),
+    MIN_ORDER_NOTIONAL_USD: numberEnv(
+      'MIN_ORDER_NOTIONAL_USD',
+      PARAMS.MIN_ORDER_NOTIONAL_USD
+    ),
     MIN_RUNG_SHARES: numberEnv('MIN_RUNG_SHARES', PARAMS.MIN_RUNG_SHARES),
     MAX_RUNG_SHARES: numberEnv('MAX_RUNG_SHARES', PARAMS.MAX_RUNG_SHARES),
     MAX_LEG_SHARES: numberEnv('MAX_LEG_SHARES', PARAMS.MAX_LEG_SHARES),
@@ -115,6 +119,7 @@ export function buildStrategyConfig({ feeMode }) {
   if (
     params.OPENING_CONSERVATIVE_UNTIL_SECONDS < params.ENTRY_GATE_SECONDS ||
     params.OPENING_MAX_RUNG_SHARES < params.MIN_RUNG_SHARES ||
+    params.MIN_ORDER_NOTIONAL_USD < 1 ||
     params.MIN_RUNG_SHARES <= 0 ||
     params.MAX_RUNG_SHARES < params.MIN_RUNG_SHARES ||
     params.MAX_LEG_SHARES < params.MIN_RUNG_SHARES ||

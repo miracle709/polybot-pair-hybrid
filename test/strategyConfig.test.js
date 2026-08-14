@@ -86,6 +86,7 @@ test('V2 pair-cycle configuration rejects unsafe targets and regime order', () =
 test('buildStrategyConfig paper matches env sizing and soft cap', () => {
   resetEnv({
     ENTRY_GATE_SECONDS: '20',
+    MIN_ORDER_NOTIONAL_USD: '1.25',
     MIN_RUNG_SHARES: '5',
     MAX_RUNG_SHARES: '',
     MAX_LEG_SHARES: '15',
@@ -101,6 +102,7 @@ test('buildStrategyConfig paper matches env sizing and soft cap', () => {
   const { params, guards, sim } = buildStrategyConfig({ feeMode: 'paper' });
 
   assert.equal(params.ENTRY_GATE_SECONDS, 20);
+  assert.equal(params.MIN_ORDER_NOTIONAL_USD, 1.25);
   assert.equal(params.MIN_RUNG_SHARES, 5);
   assert.equal(params.MAX_RUNG_SHARES, PARAMS.MAX_RUNG_SHARES);
   assert.equal(params.MAX_LEG_SHARES, 15);
@@ -144,6 +146,7 @@ test('buildStrategyConfig live requires FEE_BPS', () => {
 test('buildStrategyConfig defaults match PARAMS/GUARDS when knobs unset', () => {
   resetEnv({
     MIN_RUNG_SHARES: undefined,
+    MIN_ORDER_NOTIONAL_USD: undefined,
     MAX_RUNG_SHARES: undefined,
     MAX_LEG_SHARES: undefined,
     ENTRY_GATE_SECONDS: undefined,
@@ -160,6 +163,7 @@ test('buildStrategyConfig defaults match PARAMS/GUARDS when knobs unset', () => 
     MIN_REQUOTE_INTERVAL_MS: undefined,
   });
   delete process.env.MIN_RUNG_SHARES;
+  delete process.env.MIN_ORDER_NOTIONAL_USD;
   delete process.env.MAX_RUNG_SHARES;
   delete process.env.MAX_LEG_SHARES;
   delete process.env.ENTRY_GATE_SECONDS;
@@ -177,6 +181,10 @@ test('buildStrategyConfig defaults match PARAMS/GUARDS when knobs unset', () => 
 
   const { params, guards, sim } = buildStrategyConfig({ feeMode: 'paper' });
   assert.equal(params.MIN_RUNG_SHARES, PARAMS.MIN_RUNG_SHARES);
+  assert.equal(
+    params.MIN_ORDER_NOTIONAL_USD,
+    PARAMS.MIN_ORDER_NOTIONAL_USD
+  );
   assert.equal(params.MAX_LEG_SHARES, PARAMS.MAX_LEG_SHARES);
   assert.equal(params.ENTRY_GATE_SECONDS, PARAMS.ENTRY_GATE_SECONDS);
   assert.equal(
@@ -196,6 +204,15 @@ test('buildStrategyConfig defaults match PARAMS/GUARDS when knobs unset', () => 
   assert.equal(sim.tradeFraction, 0.6);
   assert.equal(sim.queueAheadFactor, 1);
 
+  resetEnv();
+});
+
+test('buildStrategyConfig rejects a notional floor below Polymarket minimum', () => {
+  resetEnv({ MIN_ORDER_NOTIONAL_USD: '0.99' });
+  assert.throws(
+    () => buildStrategyConfig({ feeMode: 'paper' }),
+    /dynamic sizing/
+  );
   resetEnv();
 });
 

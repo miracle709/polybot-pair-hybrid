@@ -276,6 +276,81 @@ test('complement quote responds to FIFO lot cost without averaging', () => {
   assert.equal(b.complementCapMils, 230);
 });
 
+test('low-price leg is consolidated so every individual order is at least $1', () => {
+  const lowPriceBooks = new MarketBook(
+    new LegBook(
+      [{ price: 0.11, size: 100 }],
+      [{ price: 0.12, size: 100 }],
+      1
+    ),
+    new LegBook(
+      [{ price: 0.89, size: 100 }],
+      [{ price: 0.90, size: 100 }],
+      1
+    )
+  );
+  const params = {
+    ...PARAMS,
+    BAND_LOW_MILS: 90,
+    BAND_HIGH_MILS: 910,
+    MIN_LIMIT_MILS: 90,
+    MAX_LIMIT_MILS: 910,
+  };
+  const result = computeDesiredRungs({
+    secondsIntoRound: 100,
+    books: lowPriceBooks,
+    inventory: inv(),
+    params,
+    guards: G(),
+  });
+  const up = result.rungs.filter((rung) => rung.leg === 'UP');
+  assert.deepEqual(
+    up.map(({ mils, shares }) => ({ mils, shares })),
+    [{ mils: 100, shares: 10 }]
+  );
+  assert.ok(
+    result.rungs.every((rung) => rung.shares * rung.mils >= 1000),
+    'no desired order may be below $1'
+  );
+});
+
+test('weak low-price allocation is withheld when it cannot fund a legal order', () => {
+  const lowPriceBooks = new MarketBook(
+    new LegBook(
+      [{ price: 0.11, size: 50 }],
+      [{ price: 0.12, size: 50 }],
+      1
+    ),
+    new LegBook(
+      [{ price: 0.89, size: 50 }],
+      [{ price: 0.90, size: 50 }],
+      1
+    )
+  );
+  const result = computeDesiredRungs({
+    secondsIntoRound: 100,
+    books: lowPriceBooks,
+    inventory: inv(),
+    params: {
+      ...PARAMS,
+      BAND_LOW_MILS: 90,
+      BAND_HIGH_MILS: 910,
+      MIN_LIMIT_MILS: 90,
+      MAX_LIMIT_MILS: 910,
+    },
+    guards: G(),
+  });
+  assert.equal(result.rungs.length, 0);
+  assert.ok(
+    result.suppressed.some(
+      (row) =>
+        row.leg === 'UP' &&
+        row.reason === SuppressReason.LEG_SHARE_CAP &&
+        row.detail.minimumShares === 10
+    )
+  );
+});
+
 test('ahead leg is suppressed and only its economically capped complement quotes', () => {
   const i = inv();
   i.addFill('UP', 500, GUARDS.MAX_TILT_SHARES, 0);

@@ -1,5 +1,6 @@
 import { PARAMS, GUARDS, MARKET } from './config.js';
 import { feeMilsPerShareFromBps, maximumComplementPrice } from './pairEconomics.js';
+import { minimumOrderSharesForParams } from './orderConstraints.js';
 import { notionalUsd, otherLeg, rungKey, stepTicks, tickSizeMils } from './util.js';
 
 /**
@@ -149,13 +150,19 @@ export function computeRungShares({
 
 function allocateLegShares(candidates, targetShares, params) {
   const step = params.RUNG_SIZE_STEP_SHARES;
-  const minimum = params.MIN_RUNG_SHARES;
+  const minimumByRung = candidates.map((rung) =>
+    minimumOrderSharesForParams(rung.mils, params)
+  );
   const allocation = candidates.map(() => 0);
   let remaining = Math.floor(targetShares / step) * step;
 
-  // Open a rung only with a full venue-legal grant. Remainder may never
-  // create a second rung of 1..(minimum-1) shares (Polymarket min size).
+  // Open a rung only with a full venue-legal grant. At $0.10, for example,
+  // the $1 order-notional floor consolidates a 10-share leg into one rung
+  // instead of splitting it into two venue-rejected 5-share orders.
   for (let index = 0; index < candidates.length; index += 1) {
+    const minimum = minimumByRung[index];
+    const cap = Math.min(targetShares, params.MAX_RUNG_SHARES);
+    if (minimum > cap) continue;
     if (remaining < minimum) break;
     allocation[index] = minimum;
     remaining -= minimum;
@@ -164,6 +171,7 @@ function allocateLegShares(candidates, targetShares, params) {
   while (remaining >= step) {
     let selected = -1;
     for (let index = 0; index < candidates.length; index += 1) {
+      const minimum = minimumByRung[index];
       if (allocation[index] < minimum) continue;
       const cap = Math.min(targetShares, params.MAX_RUNG_SHARES);
       if (
@@ -201,7 +209,10 @@ function applyNotionalBudget(rungs, inventory, guards, params) {
       ...rung,
       shares: Math.floor((rung.shares * scale) / step) * step,
     }))
-    .filter((rung) => rung.shares >= params.MIN_RUNG_SHARES);
+    .filter(
+      (rung) =>
+        rung.shares >= minimumOrderSharesForParams(rung.mils, params)
+    );
   return { rungs: scaled, availableUsd };
 }
 
@@ -381,7 +392,10 @@ export function computeDesiredRungs(ctx) {
             P
           );
           for (let index = 0; index < legCandidates.length; index += 1) {
-            if (sharesByRung[index] >= P.MIN_RUNG_SHARES) {
+            if (
+              sharesByRung[index] >=
+              minimumOrderSharesForParams(legCandidates[index].mils, P)
+            ) {
               candidates.push({
                 ...legCandidates[index],
                 shares: sharesByRung[index],
@@ -467,9 +481,16 @@ export function computeDesiredRungs(ctx) {
       );
       for (let index = 0; index < validCandidates.length; index += 1) {
         const shares = sharesByRung[index];
-        if (shares < P.MIN_RUNG_SHARES) {
+        const minimumShares = minimumOrderSharesForParams(
+          validCandidates[index].mils,
+          P
+        );
+        if (shares < minimumShares) {
           drop(leg, SuppressReason.LEG_SHARE_CAP, {
             mils: validCandidates[index].mils,
+            targetShares,
+            minimumShares,
+            minimumNotionalUsd: P.MIN_ORDER_NOTIONAL_USD,
           });
           continue;
         }

@@ -125,6 +125,8 @@ export const PARAMS = {
   DYNAMIC_SIZING_ENABLED: true,
   RUNG_DEPTH_FRACTION: 0.10,
   DEPTH_SIZING_TICKS: 2,
+  /** Polymarket requires every individual order to be worth at least $1. */
+  MIN_ORDER_NOTIONAL_USD: 1,
   MIN_RUNG_SHARES: 5,
   MAX_RUNG_SHARES: 20,
   MAX_LEG_SHARES: 20,

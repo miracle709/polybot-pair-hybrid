@@ -266,11 +266,19 @@ if totalNotionalUsd >= softLimit ($200):
 
 legShares = floor(min(raw, MAX_LEG_SHARES) / step) × step
 if legShares < MIN_RUNG_SHARES: legShares = 0
-split legShares across active rungs (each rung >= MIN_RUNG_SHARES)
+effectiveMin(price) = max(MIN_RUNG_SHARES, ceil($1 / price / step) × step)
+split legShares across active rungs (each rung >= effectiveMin(rung.price))
+if no legal rung fits: withhold the allocation
 
-# defaults: MIN_RUNG=5, MAX_LEG=20, MAX_RUNG=20, step=1
+# defaults: MIN_NOTIONAL=$1, MIN_RUNG=5, MAX_LEG=20, MAX_RUNG=20, step=1
 # opening (t < 30s): legShares = min(legShares, OPENING_MAX_RUNG_SHARES=20)
 ```
+
+For example, a $0.10 order requires at least 10 shares. The allocator
+consolidates a 10-share leg into one order rather than emitting two invalid
+5-share ladder rungs. The order manager and both exchange adapters repeat this
+check at submission time. A partially filled order may retain a smaller
+remainder because the minimum applies to the original submission.
 
 If dynamic sizing is disabled, fixed `RUNG_SHARES` (20) is the aggregate leg allocation.
 

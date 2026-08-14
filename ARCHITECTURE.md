@@ -138,6 +138,8 @@ before pushing a recorder event. They never await or block fill handling.
 | pair hard-max breach | after fill + before quotes | cancel quotes; recoverable strategy pause |
 | unmatched share/age breach | after fill + before quotes | suppress new/ahead cycles; economic complement only |
 | Auto Balance ask above cap | pre-FAK lot/depth check | cancel makers; return `hedge_not_economic`; keep paused |
+| order below 5 shares or $1 | allocation + pre-submit checks | consolidate or suppress; never send an invalid order |
+| Auto Balance residual below venue minimum | pre-FAK check | do not overbuy; return `hedge_below_venue_minimum`; keep paused |
 | daily loss breach | on resolution | `halt()` |
 | process restart | boot | cancel every pre-existing order before quoting |
 
