@@ -1,0 +1,43 @@
+{
+  "name": "poly-btc5m-pair-mm",
+  "version": "1.0.0",
+  "description": "Two-sided pair-accumulation market maker for Polymarket BTC 5-minute up/down markets, reconstructed from wallet 0x3048...7537",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "scripts/",
+    "README.md",
+    "ARCHITECTURE.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "bench": "node scripts/bench-recorder.js",
+    "replay": "node scripts/run-replay.js",
+    "analyse": "node scripts/analyse-log.js",
+    "paper": "node scripts/run-live.js",
+    "live": "node scripts/run-live.js --live"
+  },
+  "keywords": [
+    "polymarket",
+    "market-making",
+    "prediction-markets",
+    "clob"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "ethers": "^6.17.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@polymarket/clob-client-v2": "^1.1.0",
+    "viem": "^2.55.10",
+    "ws": "^8.13.0"
+  }
+}

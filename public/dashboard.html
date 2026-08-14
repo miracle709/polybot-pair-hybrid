@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Trading bot monitor</title>
+  <style>
+    :root{--bg:#081019;--panel:#101b27;--panel2:#142333;--line:#243648;--text:#edf5fb;--muted:#8fa4b8;--cyan:#58d2e4;--green:#4bd49a;--amber:#efb45c;--red:#ef6b73;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(900px 500px at 10% -10%,#17334b 0,var(--bg) 62%);color:var(--text);font:14px/1.45 Inter,Segoe UI,system-ui,sans-serif}
+    header{position:sticky;top:0;z-index:3;display:flex;justify-content:space-between;align-items:center;gap:16px;padding:17px 24px;background:#081019e8;backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+    h1{margin:0;font-size:17px}.sub{margin-top:3px;color:var(--muted);font-size:12px}.badges{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+    .badge{padding:5px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font:11px var(--mono)}.ok{color:var(--green);border-color:#28674e}.warn{color:var(--amber);border-color:#76582d}.bad{color:var(--red);border-color:#74383d}.paper{color:var(--cyan);border-color:#2d6f78}
+    .action{padding:7px 12px;border:1px solid #76582d;border-radius:8px;background:#1a2a1f;color:var(--amber);font:12px/1.2 Inter,Segoe UI,system-ui,sans-serif;cursor:pointer}.action:hover{background:#243a2c}.action:disabled{opacity:.55;cursor:wait}
+    main{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;max-width:1600px;margin:auto;padding:20px 24px 38px}.notice{grid-column:span 12;padding:11px 14px;border-left:3px solid var(--cyan);border-radius:4px;background:#102431;color:#bed2dd}
+    .hero{grid-column:span 12;display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.metric,.card{border:1px solid var(--line);border-radius:12px;background:linear-gradient(145deg,var(--panel2),var(--panel));box-shadow:0 12px 30px #0002}.metric{padding:15px}.label,.card h2{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.09em}.value{margin-top:6px;font:23px/1.2 var(--mono)}
+    .card{grid-column:span 4;padding:15px 16px}.card.half{grid-column:span 6}.card.full{grid-column:span 12}.card h2{margin:0 0 10px}.row{display:flex;justify-content:space-between;gap:16px;padding:6px 0;border-top:1px solid #1d2e3e}.row:first-of-type{border-top:0}.k{color:var(--muted)}.v{font-family:var(--mono);text-align:right;overflow-wrap:anywhere}
+    .table-wrap{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:8px}table{width:100%;border-collapse:collapse;white-space:nowrap;font:12px var(--mono)}th,td{padding:8px 10px;text-align:right;border-bottom:1px solid #203142}th{position:sticky;top:0;background:#172738;color:var(--muted);font:11px Inter,system-ui;text-transform:uppercase;letter-spacing:.06em}th:first-child,td:first-child{text-align:left}tr:last-child td{border-bottom:0}.status{font-weight:700}.resting{color:var(--cyan)}.partial{color:var(--amber)}.filled{color:var(--green)}.cancelled{color:var(--muted)}.rejected,.cancel_failed{color:var(--red)}.positive{color:var(--green)}.negative{color:var(--red)}.empty{padding:18px;color:var(--muted);text-align:center}
+    @media(max-width:1050px){.hero{grid-template-columns:repeat(2,1fr)}.card,.card.half{grid-column:span 6}}@media(max-width:650px){header{align-items:flex-start;padding:14px}main{padding:14px}.hero{grid-template-columns:1fr}.card,.card.half{grid-column:span 12}.value{font-size:20px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>BTC 5-minute trading bot</h1><div class="sub" id="updated">Connecting to cached telemetry…</div></div>
+    <div class="badges">
+      <button type="button" class="action" id="autoBalance" title="Cancel makers, TAKER-FAK hedge until flat, lock round PnL">Auto balance</button>
+      <div id="badges" style="display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end"></div>
+    </div>
+  </header>
+  <main id="main"><div class="empty">Waiting for supervisor…</div></main>
+  <script>
+    const el=id=>document.getElementById(id);
+    const esc=v=>String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const finite=v=>v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));
+    const num=(v,d=2)=>finite(v)?Number(v).toFixed(d):'—';
+    const usd=v=>finite(v)?`$${num(v)}`:'—';
+    const price=m=>finite(m)?`$${(Number(m)/1000).toFixed(3)}`:'—';
+    const pnlClass=v=>Number(v)>0?'positive':Number(v)<0?'negative':'';
+    const clock=v=>{
+      if(!finite(v))return '\u2014';
+      const whole=Math.max(0,Math.floor(Number(v)));
+      return `${String(Math.floor(whole/60)).padStart(2,'0')}:${String(whole%60).padStart(2,'0')}`;
+    };
+    const row=(k,v,cls='')=>`<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls}">${esc(v)}</span></div>`;
+    const badge=(v,c)=>`<span class="badge ${c}">${esc(v)}</span>`;
+    const metric=(k,v,cls='')=>`<div class="metric"><div class="label">${esc(k)}</div><div class="value ${cls}">${esc(v)}</div></div>`;
+    const booksReady=m=>Array.isArray(m)&&m.length===2&&m.every(x=>x.ready&&!x.needsResync);
+
+    // Patch the existing dashboard instead of replacing the whole tree every
+    // 250 ms. This preserves layout, scroll, selection and browser rendering
+    // state while keeping all monitoring work outside the trading engine.
+    function patchNode(current,next){
+      if(!current||!next||current.nodeType!==next.nodeType||
+         (current.nodeType===1&&current.tagName!==next.tagName)){
+        current?.replaceWith(next?.cloneNode(true));
+        return;
+      }
+      if(current.nodeType===3){
+        if(current.nodeValue!==next.nodeValue)current.nodeValue=next.nodeValue;
+        return;
+      }
+      for(const a of [...current.attributes]){
+        if(!next.hasAttribute(a.name))current.removeAttribute(a.name);
+      }
+      for(const a of [...next.attributes]){
+        if(current.getAttribute(a.name)!==a.value)current.setAttribute(a.name,a.value);
+      }
+      const newChildren=[...next.childNodes];
+      let i=0;
+      while(i<newChildren.length||i<current.childNodes.length){
+        const oldChild=current.childNodes[i],newChild=newChildren[i];
+        if(!oldChild&&newChild){current.appendChild(newChild.cloneNode(true));i++}
+        else if(oldChild&&!newChild)oldChild.remove();
+        else{patchNode(oldChild,newChild);i++}
+      }
+    }
+    function patchHtml(target,html){
+      const template=document.createElement('template');
+      template.innerHTML=html;
+      const next=[...template.content.childNodes];
+      let i=0;
+      while(i<next.length||i<target.childNodes.length){
+        const current=target.childNodes[i],replacement=next[i];
+        if(!current&&replacement){target.appendChild(replacement.cloneNode(true));i++}
+        else if(current&&!replacement)current.remove();
+        else{patchNode(current,replacement);i++}
+      }
+    }
+
+    function ordersTable(orders){
+      if(!orders.length)return '<div class="empty">No orders in this round yet.</div>';
+      return `<div class="table-wrap"><table><thead><tr><th>Order ID</th><th>Leg</th><th>Price</th><th>Original</th><th>Filled</th><th>Remaining</th><th>Status</th><th>EXE</th><th>Fee</th><th>Updated</th></tr></thead><tbody>${
+        orders.map(o=>{
+          const exe=o.role?String(o.role).toLowerCase():'—';
+          const feeCell=String(o.role).toUpperCase()==='TAKER'?usd(o.feeUsd??0):'—';
+          const displayMils=o.filledShares>0&&Number.isFinite(Number(o.avgFillMils))?o.avgFillMils:o.mils;
+          return `<tr><td title="${esc(o.orderId)}">${esc(String(o.orderId).slice(0,18))}</td><td>${esc(o.leg)}</td><td>${price(displayMils)}</td><td>${num(o.originalShares)}</td><td>${num(o.filledShares)}</td><td>${num(o.remainingShares)}</td><td class="status ${esc(o.status)}">${esc(o.status)}</td><td>${esc(exe)}</td><td>${feeCell}</td><td>${o.updatedAtMs?new Date(o.updatedAtMs).toLocaleTimeString():'—'}</td></tr>`;
+        }).join('')
+      }</tbody></table></div>`;
+    }
+
+    function roundsTable(rounds){
+      if(!rounds.length)return '<div class="empty">No settled rounds recorded for this mode yet.</div>';
+      return `<div class="table-wrap"><table><thead><tr><th>Round ID</th><th>Winner</th><th>UP shares</th><th>UP avg</th><th>DOWN shares</th><th>DOWN avg</th><th>Cost</th><th>Payout</th><th>Fees</th><th>Net PnL</th></tr></thead><tbody>${
+        [...rounds].reverse().map(r=>{
+          const winnerLabel=
+            r.winner==='HEDGED'&&r.settledBy==='auto_balance'
+              ?'AWAITING UP/DOWN'
+              :esc(r.winner||'—');
+          return `<tr><td>${esc(r.roundSlug)}</td><td>${winnerLabel}</td><td>${num(r.upShares)}</td><td>${price(r.upAvgMils)}</td><td>${num(r.downShares)}</td><td>${price(r.downAvgMils)}</td><td>${usd(r.costUsd)}</td><td>${usd(r.payoutUsd)}</td><td>${usd(r.feeUsd)}</td><td class="${pnlClass(r.pnlUsd)}">${usd(r.pnlUsd)}</td></tr>`;
+        }).join('')
+      }</tbody></table></div>`;
+    }
+
+    function render(d){
+      if(!d?.ready)throw new Error(d?.error||'telemetry not ready');
+      const tableScrolls=[...document.querySelectorAll('.table-wrap')].map(x=>({
+        top:x.scrollTop,left:x.scrollLeft
+      }));
+      const mode=d.mode||'paper', inv=d.inventory||{}, up=inv.up||{}, dn=inv.down||{};
+      const prices=d.prices||{}, upPx=prices.up||{}, dnPx=prices.down||{};
+      const current=d.currentRoundPnl||{}, paper=d.paperSummary||{}, mon=d.monitor||{}, rec=d.recorder||{};
+      const timing=d.roundTiming||{};
+      const activationPending=
+        d.roundActivationPending===true||timing.activationPending===true;
+      const age=mon.snapshotAt?Date.now()-mon.snapshotAt:null;
+      const booksOk=!activationPending&&booksReady(d.market);
+      const suppression=(d.suppressed||[]).map(x=>`${x.leg}:${x.reason}`).join(', ')||'none';
+
+      patchHtml(el('badges'),[
+        badge(mode.toUpperCase(),mode==='live'?'warn':'paper'),
+        badge(d.halted?`HALTED · ${d.haltReason||'unknown'}`:'RUNNING',d.halted?'bad':'ok'),
+        d.autoBalanced?badge(`AUTO BALANCED · ${usd(d.lockedPnlUsd)}`,'ok'):'',
+        d.paused&&!d.autoBalanced?badge(`ROUND PAUSED · ${d.pauseReason||'risk limit'}`,'warn'):'',
+        d.accountingUncertainRounds?.length
+          ?badge('PNL RECONCILIATION REQUIRED','bad')
+          :'',
+        activationPending
+          ?badge('ROUND ACTIVATION PENDING','warn')
+          :'',
+        badge(booksOk?'BOOKS READY':'BOOKS DEGRADED',booksOk?'ok':'warn'),
+        badge(age!=null&&age<3000?'CACHE HEALTHY':'CACHE STALE',age!=null&&age<3000?'ok':'bad')
+      ].join(''));
+      el('updated').textContent=`snapshot ${age==null?'—':age+' ms ago'} · browser reads pre-serialized cache only`;
+
+      // Advance the cached venue snapshot by only its transport age. The
+      // anchor itself is maintained from fresh Polymarket websocket time.
+      const duration=finite(timing.durationSeconds)?Number(timing.durationSeconds):300;
+      const transportAgeSeconds=finite(mon.transportAgeMs)
+        ?Math.max(0,Number(mon.transportAgeMs)/1000)
+        :0;
+      const remainingExact=finite(timing.remainingSeconds)
+        ?Math.max(0,Math.min(duration,Number(timing.remainingSeconds)-transportAgeSeconds))
+        :finite(d.roundSecond)
+          ?Math.max(0,duration-Number(d.roundSecond))
+          :null;
+      const elapsedExact=remainingExact==null
+        ?null
+        :Math.max(0,Math.min(duration,duration-remainingExact));
+      const elapsedWhole=elapsedExact==null?null:Math.floor(elapsedExact);
+      const remainingWhole=remainingExact==null?null:Math.ceil(remainingExact);
+      patchHtml(el('main'),`
+        <div class="notice">${mode==='live'?'LIVE EXECUTION: prices and fills are real; orders can move real funds.':'PAPER SIMULATION: prices are live; orders and fills are simulated.'}</div>
+        <div class="hero">
+          ${metric('UP price',price(upPx.midMils))}
+          ${metric('DOWN price',price(dnPx.midMils))}
+          ${metric('Round mark PnL',usd(current.markPnlUsd),pnlClass(current.markPnlUsd))}
+          ${metric('If UP wins',usd(current.ifUpWins?.pnlUsd),pnlClass(current.ifUpWins?.pnlUsd))}
+          ${metric('If DOWN wins',usd(current.ifDownWins?.pnlUsd),pnlClass(current.ifDownWins?.pnlUsd))}
+          ${metric('Worst-case PnL',usd(current.worstCasePnlUsd),pnlClass(current.worstCasePnlUsd))}
+          ${metric('Lifetime settled PnL',usd(d.settledPnlUsd??d.totalPnlUsd),pnlClass(d.settledPnlUsd??d.totalPnlUsd))}
+          ${metric('Session settled PnL',usd(d.sessionSettledPnlUsd),pnlClass(d.sessionSettledPnlUsd))}
+          ${mode==='paper'?metric('Paper bankroll',usd(d.paperBankrollUsd),pnlClass((d.paperBankrollUsd??0)-(d.paperInitialDepositUsd??0))):''}
+          ${metric('Time remaining',remainingWhole==null?'\u2014':clock(remainingWhole))}
+        </div>
+        <section class="card"><h2>UP position</h2>
+          ${row('Bought shares',num(up.shares))}${row('Average buy price',price(up.avgMils))}
+          ${row('Last buy price / shares',`${price(up.lastMils)} / ${num(up.lastFillShares)}`)}
+          ${row('Cost',usd(up.costUsd))}${row('Fill count',up.fills)}
+          ${row('Market bid / ask',`${price(upPx.bidMils)} / ${price(upPx.askMils)}`)}
+        </section>
+        <section class="card"><h2>DOWN position</h2>
+          ${row('Bought shares',num(dn.shares))}${row('Average buy price',price(dn.avgMils))}
+          ${row('Last buy price / shares',`${price(dn.lastMils)} / ${num(dn.lastFillShares)}`)}
+          ${row('Cost',usd(dn.costUsd))}${row('Fill count',dn.fills)}
+          ${row('Market bid / ask',`${price(dnPx.bidMils)} / ${price(dnPx.askMils)}`)}
+        </section>
+        <section class="card"><h2>Current round</h2>
+          ${row('Round ID',d.round)}
+          ${row('Venue active round',timing.expectedRoundSlug)}
+          ${row('State',activationPending?'ACTIVATING':d.roundState)}
+          ${row('Resting orders',d.liveOrders)}
+          ${row('Outcome',d.roundState==='DONE'?(d.lastSettled?.winner||'confirmed'):'PENDING POLYMARKET CONFIRMATION')}
+          ${row('Position cost',usd(inv.notionalUsd))}${row('Best-bid value',usd(current.markedValueUsd))}
+          ${row('Fees',usd(current.feeUsd))}${row('Mark PnL',usd(current.markPnlUsd),pnlClass(current.markPnlUsd))}
+          ${row('If UP: payout / PnL / ROI',`${usd(current.ifUpWins?.payoutUsd)} / ${usd(current.ifUpWins?.pnlUsd)} / ${num((current.ifUpWins?.roi??0)*100,2)}%`,pnlClass(current.ifUpWins?.pnlUsd))}
+          ${row('If DOWN: payout / PnL / ROI',`${usd(current.ifDownWins?.payoutUsd)} / ${usd(current.ifDownWins?.pnlUsd)} / ${num((current.ifDownWins?.roi??0)*100,2)}%`,pnlClass(current.ifDownWins?.pnlUsd))}
+          ${row('Matched / tilt',`${num(inv.matched)} / ${num(inv.tilt)}`)}${row('Suppressed',suppression)}
+          ${row('Pair regime / cycle',`${d.currentKpis?.pairRegime||'—'} / ${d.currentKpis?.pairCycleState||'—'}`)}
+          ${row('Unmatched UP / DOWN',`${num(d.currentKpis?.unmatchedUp)} / ${num(d.currentKpis?.unmatchedDown)}`)}
+          ${row('Complement cap',price(d.currentKpis?.complementCapMils))}
+          ${row('Oldest unmatched age',`${num(d.currentKpis?.oldestUnmatchedAgeSeconds,1)}s`)}
+          ${row('Pair cost (avg sum)',num((d.currentKpis?.pairCostMils??0)/1000,3))}
+          ${row('Completed pairs / avg cost',`${d.currentKpis?.completedPairCount??0} / ${price(d.currentKpis?.completedPairAverageMils)}`)}
+          ${row('Completed pair edge',usd(d.currentKpis?.completedPairEdgeUsd),pnlClass(d.currentKpis?.completedPairEdgeUsd))}
+          ${row('Worst-case settlement PnL',usd(current.worstCasePnlUsd),pnlClass(current.worstCasePnlUsd))}
+          ${row('Tilt fraction',num(d.currentKpis?.tiltFraction,3))}
+          ${row('Swept notional >3c',`${num((d.currentKpis?.sweptNotionalFraction??0)*100,2)}%`)}
+          ${row('Round elapsed',elapsedWhole==null?'\u2014':`${clock(elapsedWhole)} / ${clock(duration)}`)}
+          ${row('Time remaining',remainingWhole==null?'\u2014':clock(remainingWhole))}
+          ${row('Market close',!activationPending&&finite(timing.endEpoch)?new Date(Number(timing.endEpoch)*1000).toLocaleTimeString():'\u2014')}
+          ${row('Target strategy','V2 finite pair-cycle · marginal economics')}
+        </section>
+        <section class="card full"><h2>All orders · current round</h2>${ordersTable(d.orders||[])}</section>
+        <section class="card full"><h2>Round history · latest 50 settled rounds</h2>${roundsTable(d.rounds||[])}</section>
+        <section class="card half"><h2>Risk and session</h2>
+          ${mode==='paper'?row('Paper bankroll',usd(d.paperBankrollUsd),pnlClass((d.paperBankrollUsd??0)-(d.paperInitialDepositUsd??0))):''}
+          ${mode==='paper'?row('Paper bankroll (marked)',usd(d.paperBankrollMarkedUsd),pnlClass((d.paperBankrollMarkedUsd??0)-(d.paperInitialDepositUsd??0))):''}
+          ${mode==='paper'?row('Paper initial deposit',usd(d.paperInitialDepositUsd)):''}
+          ${row('Marked total incl. open',usd(d.totalMarkedPnlUsd),pnlClass(d.totalMarkedPnlUsd))}
+          ${row('Lifetime settled PnL',usd(d.settledPnlUsd??d.totalPnlUsd),pnlClass(d.settledPnlUsd??d.totalPnlUsd))}
+          ${row('Session settled PnL',usd(d.sessionSettledPnlUsd),pnlClass(d.sessionSettledPnlUsd))}
+          ${row('Settled rounds',d.settledRounds??0)}
+          ${row('Daily PnL incl. open',usd(d.dailyMarkedPnlUsd),pnlClass(d.dailyMarkedPnlUsd))}
+          ${row('Daily settled PnL',usd(d.dailyPnlUsd),pnlClass(d.dailyPnlUsd))}
+          ${row('Open notional limit',usd(d.limits?.maxOpenNotionalUsd))}
+          ${row('Daily loss stop',usd(d.limits?.maxDailyLossUsd))}
+          ${row('Sizing',d.sizing?.dynamic?'Dynamic':'Fixed')}
+          ${row('Depth sizing',finite(d.sizing?.depthFraction)?`${num(d.sizing.depthFraction*100,1)}% within ${d.sizing.depthTicks} ticks`:'—')}
+          ${row('Share bounds',`${num(d.sizing?.minShares,0)} – ${num(d.sizing?.maxShares,0)}`)}
+          ${row('Opening gate',`${num(d.sizing?.entryGateSeconds,0)}s`)}
+          ${row('Opening max size',`${num(d.sizing?.openingMaxShares,0)} sh / leg`)}
+          ${row('Opening conservative until',`${num(d.sizing?.openingUntilSeconds,0)}s`)}
+          ${row('Soft round spend rail',usd(d.sizing?.roundSoftLimitUsd))}
+          ${row('State',d.halted?'HALTED until restart':d.paused?'Current round paused':'Running')}
+          ${row('Awaiting final outcomes',d.resolutionQueue??0)}
+          ${row('Stored unresolved rounds',d.storedUnresolvedRounds??0)}
+          ${row('Accounting reconciliation',d.accountingUncertainRounds?.length?(d.accountingUncertainRounds||[]).join(', '):'clear')}
+          ${row('Live restart reconciliation',d.requiresAccountReconciliation?'REQUIRED · trading halted':'clear')}
+          ${mode==='paper'?row('Paper fills / notional',`${paper.fills??0} / ${usd(paper.notionalUsd)}`):''}
+        </section>
+        <section class="card half"><h2>Non-blocking monitoring</h2>
+          ${row('Snapshot build',mon.buildMs==null?'—':`${mon.buildMs} ms`)}
+          ${row('Snapshot max / failures',`${num(mon.maxBuildMs,3)} ms / ${mon.failures??0}`)}
+          ${row('Snapshot interval',mon.intervalMs==null?'—':`${mon.intervalMs} ms`)}
+          ${row('Round clock source',timing.source??'system_fallback')}
+          ${row('Venue clock offset',finite(timing.offsetMs)?`${num(timing.offsetMs,0)} ms`:'waiting for fresh venue timestamp')}
+          ${row('HTTP source',mon.cached?'pre-serialized memory cache':'unknown')}
+          ${row('Log schema',rec.schema??'—')}
+          ${row('Target record types',(rec.eventTypes||[]).join(', ')||'—')}
+          ${row('Log buffer',rec.depth==null?'—':`${rec.depth}/${rec.capacity}`)}
+          ${row('Log dropped / rate',`${rec.dropped??'—'} / ${num(rec.dropRate,6)}`)}
+        </section>`);
+      document.querySelectorAll('.table-wrap').forEach((x,i)=>{
+        x.scrollTop=tableScrolls[i]?.top??0;
+        x.scrollLeft=tableScrolls[i]?.left??0;
+      });
+    }
+
+    let pollTimer=null,inFlight=false;
+    const statusToken=new URLSearchParams(location.search).get('token');
+    const statusUrl=statusToken
+      ? `/api/status?token=${encodeURIComponent(statusToken)}`
+      : '/api/status';
+    const autoBalanceUrl=statusToken
+      ? `/api/auto-balance?token=${encodeURIComponent(statusToken)}`
+      : '/api/auto-balance';
+    let autoBalanceBusy=false;
+    el('autoBalance').addEventListener('click',async()=>{
+      if(autoBalanceBusy)return;
+      autoBalanceBusy=true;
+      const btn=el('autoBalance');
+      btn.disabled=true;
+      el('updated').textContent='Auto balance in progress…';
+      try{
+        const headers={'content-type':'application/json'};
+        if(statusToken)headers.authorization=`Bearer ${statusToken}`;
+        const r=await fetch(autoBalanceUrl,{method:'POST',headers,cache:'no-store'});
+        const body=await r.json().catch(()=>({ok:false,error:`HTTP ${r.status}`}));
+        if(!r.ok||body.ok===false){
+          el('updated').textContent=`Auto balance failed: ${body.error||body.message||('HTTP '+r.status)}`;
+        }else if(finite(body.lockedPnlUsd)){
+          el('updated').textContent=`Auto balance locked PnL ${usd(body.lockedPnlUsd)} · awaiting market winner (UP/DOWN)`;
+        }else{
+          el('updated').textContent=body.message||'Auto balance ok';
+        }
+      }catch(e){
+        el('updated').textContent=`Auto balance failed: ${e.message||e}`;
+      }finally{
+        autoBalanceBusy=false;
+        btn.disabled=false;
+      }
+    });
+    async function tick(){
+      if(inFlight)return;
+      if(document.hidden){
+        pollTimer=setTimeout(tick,2000);
+        return;
+      }
+      inFlight=true;
+      const started=performance.now();
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),1500);
+      try{
+        const r=await fetch(statusUrl,{cache:'no-store',signal:controller.signal});
+        if(!r.ok)throw new Error(`status HTTP ${r.status}`);
+        const data=await r.json();
+        const serverSnapshotAge=Number(r.headers.get('x-snapshot-age-ms'));
+        data.monitor=data.monitor||{};
+        data.monitor.transportAgeMs=
+          (Number.isFinite(serverSnapshotAge)?serverSnapshotAge:0)+
+          (performance.now()-started)/2;
+        await new Promise(resolve=>requestAnimationFrame(()=>{render(data);resolve()}));
+      }
+      catch(e){el('badges').innerHTML=badge('UI OFFLINE','bad');el('updated').textContent=String(e.message||e)}
+      finally{
+        clearTimeout(timeout);
+        inFlight=false;
+        // Self-scheduling prevents overlapping requests and catch-up bursts.
+        const wait=Math.max(25,250-(performance.now()-started));
+        pollTimer=setTimeout(tick,wait);
+      }
+    }
+    document.addEventListener('visibilitychange',()=>{
+      clearTimeout(pollTimer);
+      if(!document.hidden)tick();
+      else pollTimer=setTimeout(tick,2000);
+    });
+    tick();
+  </script>
+</body>
+</html>
